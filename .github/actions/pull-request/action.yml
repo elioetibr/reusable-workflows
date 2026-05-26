@@ -1,0 +1,91 @@
+name: Pull Request Deployment
+description: Pull Request Deployment
+
+inputs:
+  bot-email:
+    default: elio+github-actons-bot@elio.eti.br
+    required: false
+    description: GitHub Actions Bot Email
+  bot-username:
+    default: '@elioetibr'
+    required: false
+    description: GitHub Actions Bot UserName
+  delete-branch:
+    default: 'true'
+    required: false
+    description: Delete branch once PR is merged
+  draft:
+    default: 'false'
+    required: false
+    description: Set PullRequest as Draft
+  environment:
+    required: true
+    description: Environment Name
+  pr-assignees:
+    default: ''
+    required: false
+    description: PR Assignees
+  pr-reviewers:
+    default: ''
+    required: false
+    description: PR Reviewers
+  pr-team-reviewers:
+    default: viafoura/teams/sre,
+    required: false
+    description: PR Team Reviewers
+  service-name:
+    required: true
+    description: Service Name
+  signoff:
+    default: 'false'
+    required: false
+    description: Signoff Commits with GPG
+  semver:
+    required: true
+    description: Semantic Version
+  token:
+    default: ${{ github.token }}
+    required: false
+    description: GitHub Token
+outputs:
+  pull-request-number:
+    description: PullRequest Number
+    value: ${{ steps.cpr.outputs.pull-request-number }}
+runs:
+  using: composite
+  steps:
+    - name: Create Pull Request
+      id: cpr
+      uses: peter-evans/create-pull-request@v8
+      with:
+        token: ${{ inputs.token }}
+        commit-message: 'chore(gitops): Update ${{ inputs.environment }} deployment image tag to ${{ inputs.semver }} [skip ci]'
+        committer: ${{ inputs.bot-username }} <${{ inputs.bot-email }}>
+        author: ${{ inputs.bot-username }} <${{ inputs.bot-email }}>
+        signoff: ${{ inputs.signoff }}
+        branch: deployment/${{ inputs.environment }}-v${{ inputs.semver }}
+        delete-branch: ${{ inputs.delete-branch }}
+        title: '[GitOps] Deploying new version: v${{ inputs.semver }} into ${{ inputs.environment }} [skip ci]'
+        body: |
+          ### 🚀 Automated GitOps Pull Request Deployment 🚀
+
+          This Pull Request is part of Continuous Deployment with ArgoCD
+          - Environment: ${{ inputs.environment }}
+          - Version: ${{ inputs.semver }}
+
+          Notes:
+          - Once this PullRequest has been approved, ArgoCD will sync the new tag.
+          - Please keep your eyes on [#alerts](https://viafoura.slack.com/archives/<channel-id>) Channel at Slack.
+        labels: |
+          ${{ inputs.environment }}
+          ${{ inputs.environment }}-${{ inputs.semver }}
+          ${{ inputs.environment }}-v${{ inputs.semver }}
+          ${{ inputs.service-name }}
+          argocd
+          automated pr
+          deployment
+          gitops
+        draft: ${{ inputs.draft }}
+        assignees: ${{ inputs.pr-assignees }}
+        reviewers: ${{ inputs.pr-reviewers }}
+        team-reviewers: ${{ inputs.pr-team-reviewers }}

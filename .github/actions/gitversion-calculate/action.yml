@@ -1,0 +1,58 @@
+name: 'GitVersion Calculate'
+description: 'Cache, install, and execute GitVersion for semantic versioning'
+author: 'elioseverojunior@gmail.com'
+
+inputs:
+  version-spec:
+    description: 'GitVersion version specification'
+    required: false
+    default: '6.x'
+
+outputs:
+  version:
+    description: 'Major.Minor.Patch version'
+    value: ${{ steps.gitversion.outputs.majorMinorPatch }}
+  majorMinorPatch:
+    description: 'Major.Minor.Patch version (alias)'
+    value: ${{ steps.gitversion.outputs.majorMinorPatch }}
+  semVer:
+    description: 'Semantic version'
+    value: ${{ steps.gitversion.outputs.semVer }}
+  shortSha:
+    description: 'Short SHA'
+    value: ${{ steps.gitversion.outputs.shortSha }}
+  sha:
+    description: 'Full SHA'
+    value: ${{ steps.gitversion.outputs.sha }}
+  major:
+    description: 'Major version'
+    value: ${{ steps.gitversion.outputs.major }}
+  minor:
+    description: 'Minor version'
+    value: ${{ steps.gitversion.outputs.minor }}
+  patch:
+    description: 'Patch version'
+    value: ${{ steps.gitversion.outputs.patch }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Cache GitVersion tool
+      uses: actions/cache@v5
+      with:
+        path: |
+          /opt/hostedtoolcache/GitVersion.Tool
+          ~/.dotnet/tools
+        key: gitversion-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version-spec }}
+        restore-keys: |
+          gitversion-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version-spec }}
+          gitversion-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install GitVersion
+      uses: gittools/actions/gitversion/setup@v4.5.0
+      with:
+        versionSpec: ${{ inputs.version-spec }}
+
+    - name: Calculate version
+      id: gitversion
+      uses: gittools/actions/gitversion/execute@v4.5.0

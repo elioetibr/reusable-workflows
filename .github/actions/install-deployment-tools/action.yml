@@ -1,0 +1,54 @@
+name: Install Deployment Missing Tools
+description: This Composite Action takes care of installing all the essential deployment tools you might be missing,
+  ensuring a seamless setup for your project. Let's get everything you need up and running effortlessly.
+
+inputs:
+  argocd_version:
+    default: v2.12.6
+    required: false
+    description: ArgoCD Version
+
+  helm_version:
+    default: v3.17.0
+    required: false
+    description: Helm Charts Version
+
+  sops_version:
+    default: v3.9.4
+    required: false
+    description: Sops Version
+
+  helm_secrets_version:
+    default:  4.6.2
+    required: false
+    description: Helm Secrets Plugin Version
+
+runs:
+  using: composite
+  steps:
+    - name: Install Tools
+      shell: bash -l {0}
+      run: |
+        #!/usr/bin/env bash
+
+        set -euo  pipefail
+
+        case $(uname -m) in
+          x86_64)   ARCH=amd64; ;;
+          armv7l)   ARCH=arm; ;;
+          aarch64)  ARCH=arm64; ;;
+          ppc64le)  ARCH=ppc64le; ;;
+          s390x)    ARCH=s390x; ;;
+          *) echo "un-supported arch, exit ..."; exit 1; ;;
+        esac
+
+        sudo curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/download/${{ inputs.argocd_version }}/argocd-linux-${ARCH}
+        sudo chmod +x /usr/local/bin/argocd
+
+        SOPS_URL="https://github.com/getsops/sops/releases/download/${{ inputs.sops_version }}/sops-${{ inputs.sops_version }}.linux.${ARCH}"
+        sudo curl -sSL -o /usr/local/bin/sops "${SOPS_URL}"
+        sudo chmod +x /usr/local/bin/sops
+
+        HELM_URL="https://get.helm.sh/helm-${{ inputs.helm_version }}-linux-${ARCH}.tar.gz"
+        sudo wget -qO - "${HELM_URL}" | tar xzvf - -C /usr/local/bin/ --strip-components 1 "linux-${ARCH}/helm"
+        helm plugin install https://github.com/jkroepke/helm-secrets --version ${{ inputs.helm_secrets_version }}

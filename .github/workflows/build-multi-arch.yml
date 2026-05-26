@@ -1,0 +1,810 @@
+name: Multi-Arch Build Pipeline
+
+# Unified workflow for multi-architecture Docker builds
+# Supports both pure Docker builds and Java/Gradle builds
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+  checks: write
+  packages: write
+
+on:
+  workflow_call:
+    inputs:
+      # Build Type Selection
+      build-type:
+        description: 'Build type: docker or java'
+        required: true
+        type: string
+
+      # AWS Configuration
+      aws-account-id:
+        default: ${{ vars.AWS_CICD_ACCOUNT_ID || '' }}
+        description: 'AWS Account ID'
+        required: false
+        type: string
+
+      aws-additional-ecr-registries:
+        description: 'Comma-separated list of ECR registries to login to. default (218894879100 - testdev).'
+        required: false
+        type: string
+        default: ${{ vars.AWS_ADDITIONAL_ECR_REGISTRIES || '' }}
+
+      aws-region:
+        default: ${{ vars.AWS_REGION }}
+        description: 'AWS Region'
+        required: false
+        type: string
+
+      aws-role-name:
+        default: ${{ vars.AWS_CICD_CROSS_ACCOUNT_ROLE }}
+        description: 'AWS GitHub OIDC Role Name'
+        required: false
+        type: string
+
+      # ECR Configuration
+      aws-ecr-registry:
+        required: false
+        type: string
+        description: 'ECR Registry (defaults to aws-account-id.dkr.ecr.aws-region.amazonaws.com)'
+        default: ${{ vars. }}
+
+      ecr-repository:
+        required: false
+        type: string
+        default: ${{ github.event.repository.name }}
+        description: 'ECR repository name for Docker images'
+
+      # Docker Configuration
+      dockerfile-path:
+        default: './Dockerfile'
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+
+      context:
+        default: '.'
+        description: 'Docker build context directory'
+        required: false
+        type: string
+
+      provenance:
+        default: ${{ vars.DOCKER_BUILD_PROVENANCE }}
+        description: 'Enable SLSA provenance'
+        required: false
+        type: string
+
+      push:
+        default: ${{ vars.DOCKER_BUILD_PUSH }}
+        description: 'Push image after build'
+        required: false
+        type: string
+
+      fail-fast:
+        default: true
+        description: 'Fail workflow fast if a job fails'
+        required: false
+        type: boolean
+
+      create-latest-tag:
+        default: ${{ vars.DOCKER_TAG_LATEST || 'false' }}
+        description: 'Create and push the latest tag alongside the version tag'
+        required: false
+        type: string
+
+      # Java Configuration (only used when build-type is java)
+      jdk-version:
+        description: 'JDK version to use for building'
+        required: false
+        type: number
+
+      jdk-distribution:
+        required: false
+        type: string
+        default: 'corretto'
+        description: 'JDK distribution (corretto, temurin, etc.)'
+
+      uses-sonar:
+        required: false
+        type: boolean
+        default: false
+        description: 'Enable SonarCloud analysis'
+
+      uses-editorconfig:
+        required: false
+        type: boolean
+        default: false
+        description: 'Enable editorconfig check'
+
+      upload-artifacts:
+        required: false
+        type: boolean
+        default: false
+        description: 'Upload build artifacts'
+
+      api-spec-validation:
+        required: false
+        type: boolean
+        default: false
+
+      api-spec-path:
+        required: false
+        type: string
+        default: "**/api-spec.yaml"
+
+      ruleset-path:
+        required: false
+        type: string
+        default: '.spectral.yaml'
+
+      # GitHub Configuration
+      client-id:
+        default: ${{ vars.CLIENT_ID }}
+        description: 'GitHub App Client ID'
+        required: false
+        type: string
+
+      owner:
+        default: ${{ github.repository_owner }}
+        description: 'GitHub Organization Owner'
+        required: false
+        type: string
+
+      repository:
+        default: ${{ github.event.repository.name }}
+        description: 'GitHub Repository Name'
+        required: false
+        type: string
+
+      # Runner Configuration
+      runsOnDefault:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+        description: 'Default runner for non-arch-specific jobs'
+
+      runsOnAmd64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_AMD64 }}
+        description: 'Runner for AMD64 architecture builds'
+
+      runsOnArm64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_ARM64 }}
+        description: 'Runner for ARM64 architecture builds'
+
+      # GitVersion Configuration
+      versionSpec:
+        default: ${{ vars.GITVERSION_SPEC || '6.x' }}
+        description: 'GitVersion Version Specification'
+        required: false
+        type: string
+
+      # Slack Configuration
+      slack-send-notification:
+        default: ${{ vars.SLACK_SEND_NOTIFICATIONS }}
+        description: 'Send Slack Notification on failure'
+        required: false
+        type: string
+
+      slack-channels:
+        default: ${{ vars.SLACK_VIAFOURA_CHANNELS }}
+        description: 'Slack channels for notifications'
+        required: false
+        type: string
+
+    secrets:
+      PRIVATE_KEY:
+        required: true
+      SONAR_TOKEN:
+        required: true
+      SLACK_BOT_TOKEN:
+        required: true
+
+    outputs:
+      version:
+        description: 'The version calculated by GitVersion'
+        value: ${{ jobs.version.outputs.version }}
+      semVer:
+        description: 'The semantic version'
+        value: ${{ jobs.version.outputs.semVer }}
+      shortSha:
+        description: 'Short SHA of the commit'
+        value: ${{ jobs.version.outputs.shortSha }}
+      sha:
+        description: 'Full SHA of the commit'
+        value: ${{ jobs.version.outputs.sha }}
+      prSemVer:
+        description: 'PR-scoped semantic version (empty on non-pull_request events)'
+        value: ${{ jobs.version.outputs.prSemVer }}
+
+env:
+  API_SPEC_PATH: ${{ inputs.api-spec-path }}
+  API_SPEC_VALIDATION: ${{ inputs.api-spec-validation }}
+  AWS_REGION: ${{ inputs.aws-region }}
+  BUILD_ARTIFACTS_NAME: 'build-artifacts'
+  BUILD_ARTIFACTS_PATH: 'build'
+  ECR_REGISTRY: "${{ inputs.ecr-registry == '' && format('{0}.dkr.ecr.{1}.amazonaws.com', inputs.aws-account-id, inputs.aws-region) || inputs.ecr-registry }}"
+  ECR_REPOSITORY: "${{ inputs.ecr-repository || github.event.repository.name }}"
+  ECR_REPOSITORY_URI: "${{ inputs.ecr-registry == '' && format('{0}.dkr.ecr.{1}.amazonaws.com', inputs.aws-account-id, inputs.aws-region) || inputs.ecr-registry }}/${{ inputs.ecr-repository || github.event.repository.name }}"
+  RULESET_PATH: ${{ inputs.ruleset-path }}
+  TEST_RESULT_NAME: 'test-reports'
+  TEST_RESULT_PATH: 'build/reports'
+  UPLOAD_ARTIFACTS: ${{ inputs.upload-artifacts }}
+
+concurrency:
+  group: ${{ github.event.repository.name }}-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+
+jobs:
+  # =============================================================================
+  # SANITIZATION JOB
+  # =============================================================================
+  sanitization:
+    name: Sanitization
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: ${{ always() }}
+    outputs:
+      ecr_repository: ${{ steps.sanitize.outputs.ecr_repository }}
+      ref_name: ${{ steps.sanitize.outputs.ref_name }}
+    steps:
+      - name: Sanitize branch name for cache keys
+        id: sanitize
+        run: |
+          SANITIZED_REF=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+          SANITIZED_ECR_REPOSITORY=$(echo "${{ inputs.ecr-repository }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+          echo "ref_name=${SANITIZED_REF}" >> "$GITHUB_OUTPUT"
+          echo "ecr_repository=${SANITIZED_ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+  # =============================================================================
+  # ECR CHECKS JOB
+  # =============================================================================
+  checks:
+    name: AWS ECR Checks
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: ${{ success() && !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]')) }}
+    outputs:
+      needs-latest: ${{ steps.ecr-repository-check.outputs.needs-latest }}
+      ecr-status: ${{ steps.ecr-repository-check.outputs.status }}
+    steps:
+      - name: AWS ECR Setup
+        uses: elioetibr/composite-actions/.github/actions/aws-ecr-setup@main
+        with:
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+          additional-registries: ${{ inputs.additional-registries }}
+
+      - name: Create ECR Private Repository if Not Exists
+        id: ecr-repository-check
+        uses: elioetibr/composite-actions/.github/actions/ecr-repository-check@main
+        with:
+          repository: ${{ inputs.ecr-repository }}
+          region: ${{ inputs.aws-region }}
+          aws-account-id: ${{ inputs.aws-account-id }}
+          is-default-branch: ${{ github.ref_name == github.event.repository.default_branch }}
+
+  # =============================================================================
+  # VERSION CALCULATION JOB
+  # =============================================================================
+  version:
+    name: Calculate Version
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: ${{ !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]')) }}
+    outputs:
+      version: ${{ steps.gitversion.outputs.majorMinorPatch }}
+      semVer: ${{ steps.gitversion.outputs.semVer }}
+      shortSha: ${{ steps.gitversion.outputs.shortSha }}
+      sha: ${{ steps.gitversion.outputs.sha }}
+      prSemVer: ${{ steps.export_pr_version.outputs.prSemVer || '' }}
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/.github/actions/github-auth-checkout@main
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Calculate Version
+        id: gitversion
+        uses: elioetibr/composite-actions/.github/actions/gitversion-calculate@main
+        with:
+          version-spec: ${{ inputs.versionSpec }}
+
+      - name: Export PR Version
+        id: export_pr_version
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          # HEAD is the PR branch tip: the checkout step pins ref to
+          # github.event.pull_request.head.sha on pull_request events, so
+          # git rev-parse resolves the developer's branch HEAD (not the
+          # ephemeral refs/pull/N/merge commit). Adaptive abbreviation keeps
+          # the length consistent with legacy java-pull-request.yml.
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          PRSEMVER="${{ format('PR-{0}-{1}', github.event.pull_request.number, github.run_attempt) }}-${SHORT_SHA}"
+          echo "PRSEMVER=${PRSEMVER}" >> "$GITHUB_ENV"
+          echo "prSemVer=${PRSEMVER}" >> "$GITHUB_OUTPUT"
+
+      - name: Display Semantic Version Information
+        run: |
+          echo "version: ${{ steps.gitversion.outputs.majorMinorPatch }}"
+          echo "semVer: ${{ steps.gitversion.outputs.semVer }}"
+          echo "shortSha: ${{ steps.gitversion.outputs.shortSha }}"
+          echo "sha: ${{ steps.gitversion.outputs.sha }}"
+          echo "prSemVer: ${{ steps.export_pr_version.outputs.prSemVer || '' }}"
+
+  # =============================================================================
+  # GRADLE BUILD JOB (Java only)
+  # This job runs only if build-type is 'java'
+  #   The build artifacts are then used in the Docker build job, so it must succeed
+  #   before the Docker build job can run.
+  #  The Dockerfile is built from the Gradle build artifacts.
+  # =============================================================================
+  gradle-build:
+    name: Gradle Build
+    needs: [version]
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: ${{ inputs.build-type == 'java' && success() && !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]')) }}
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/.github/actions/github-auth-checkout@main
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: AWS ECR Setup
+        id: aws
+        uses: elioetibr/composite-actions/.github/actions/aws-ecr-setup@main
+        with:
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+          additional-registries: ${{ inputs.additional-registries }}
+
+      - name: Get Sonar secrets by name
+        if: ${{ inputs.uses-sonar }}
+        uses: aws-actions/aws-secretsmanager-get-secrets@v3
+        with:
+          secret-ids: |
+            SONAR_TOKEN,/sonar/token
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.jdk-version }}
+          distribution: ${{ inputs.jdk-distribution }}
+
+      - name: Cache SonarCloud packages
+        if: ${{ inputs.uses-sonar }}
+        uses: actions/cache@v5
+        with:
+          path: ~/.sonar/cache
+          key: sonar-${{ runner.os }}-${{ runner.arch }}
+          restore-keys: sonar-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.gradle') }}
+
+      - name: Run build with Gradle Wrapper
+        shell: bash -l {0}
+        run: |
+          cmd="./gradlew build"
+
+          if [[ "${{ inputs.uses-sonar }}" == "true" ]]; then
+            cmd="$cmd sonar"
+          fi
+
+          if [[ "${{ inputs.uses-editorconfig }}" == "true" ]]; then
+            cmd="$cmd editorConfigCheck"
+          fi
+
+          cmd="$cmd -Pvfpipe.version=${{ needs.version.outputs.semVer }} -Pversion=${{ needs.version.outputs.semVer }}"
+
+          echo "Running gradle: $cmd"
+          $cmd
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.TEST_RESULT_NAME }}
+          path: ${{ env.TEST_RESULT_PATH }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BUILD_ARTIFACTS_NAME }}
+          path: ${{ env.BUILD_ARTIFACTS_PATH }}
+
+  # =============================================================================
+  # DOCKER BUILD JOB (Multi-arch matrix)
+  # =============================================================================
+  docker-build:
+    name: Docker Build Image
+    needs: [sanitization, checks, version, gradle-build]
+    if: |
+      always() &&
+      needs.sanitization.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.version.result == 'success' &&
+      (inputs.build-type == 'docker' || needs.gradle-build.result == 'success') &&
+      !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]'))
+    concurrency:
+      group: ${{ github.event_name }}-${{ matrix.platformShort }}-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+      cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+    strategy:
+      fail-fast: ${{ inputs.fail-fast }}
+      matrix:
+        include:
+          - platform: linux/amd64
+            platformShort: amd64
+            metaTags: amd64Tags
+            runner: ${{ inputs.runsOnAmd64 }}
+          - platform: linux/arm64
+            platformShort: arm64
+            metaTags: arm64Tags
+            runner: ${{ inputs.runsOnArm64 }}
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      architecture: ${{ steps.tags.outputs.architecture }}
+      semVer: ${{ steps.tags.outputs.semVer }}
+      tags: ${{ steps.tags.outputs.tags }}
+      metaTags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/.github/actions/github-auth-checkout@main
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: AWS ECR Setup
+        id: aws
+        uses: elioetibr/composite-actions/.github/actions/aws-ecr-setup@main
+        with:
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+          additional-registries: ${{ inputs.additional-registries }}
+
+      - name: Download Build Libs
+        id: download-build-libs
+        if: ${{ inputs.build-type == 'java' }}
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.BUILD_ARTIFACTS_NAME }}
+          path: ${{ env.BUILD_ARTIFACTS_PATH }}
+
+      - name: Docker Tags
+        id: tags
+        uses: viafoura/docker-tag-generator-action@v1
+        with:
+          platform: ${{ matrix.platform }}
+          semVer: ${{ needs.version.outputs.semVer }}
+
+      - name: Docker Meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.ECR_REPOSITORY_URI }}
+          tags: |
+            ${{ steps.tags.outputs.tags }}
+            type=raw,enable=${{ github.event_name == 'pull_request' }},priority=200,prefix=,suffix=,value=${{ matrix.platformShort }}-${{ needs.version.outputs.prSemVer }}
+          flavor: |
+            latest=${{ (github.ref_name == github.event.repository.default_branch || needs.checks.outputs.needs-latest == 'true') && steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
+
+      - name: Docker BuildX Setup
+        uses: elioetibr/composite-actions/.github/actions/docker-buildx-setup@main
+
+      - name: Cache Docker layers
+        uses: actions/cache@v5
+        with:
+          path: /tmp/buildx-cache-${{ runner.arch }}
+          key: buildx-cache-${{ needs.sanitization.outputs.ref_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dockerfile-path, '**/*.gradle') }}
+          restore-keys: |
+            buildx-cache-${{ needs.sanitization.outputs.ref_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dockerfile-path, '**/*.gradle') }}
+            buildx-cache-${{ needs.sanitization.outputs.ref_name }}-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Docker Build and Publish
+        id: docker_build
+        uses: docker/build-push-action@v7
+        env:
+          SEMVER: ${{ needs.version.outputs.semVer }}
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile-path }}
+          build-args: |
+            TARGETPLATFORM=${{ matrix.platform }}
+            TARGETARCH=${{ matrix.platformShort }}
+            GITHUB_REPOSITORY=${{ github.repository }}
+            BRANCH_NAME=${{ github.ref_name }}
+            PR_BRANCH=${{ github.event.pull_request.head.ref || '' }}
+            PR_BASE=${{ github.event.pull_request.base.ref || '' }}
+            PR_KEY=${{ github.event.pull_request.number || '' }}
+            PROJECT_VERSION=${{ env.SEMVER }}
+            VERSION=${{ env.SEMVER }}
+          secrets: |
+            "AWS_ACCESS_KEY_ID=${{ steps.aws.outputs.aws-access-key-id }}"
+            "AWS_SECRET_ACCESS_KEY=${{ steps.aws.outputs.aws-secret-access-key }}"
+            "AWS_SESSION_TOKEN=${{ steps.aws.outputs.aws-session-token }}"
+            "GITHUB_TOKEN=${{ steps.auth.outputs.token }}"
+            "SONAR_TOKEN=${{ secrets.SONAR_TOKEN }}"
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ matrix.platform }}
+          provenance: ${{ inputs.provenance }}
+          push: ${{ inputs.push }}
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: |
+            type=local,src=/tmp/buildx-cache-${{ runner.arch }},ignore-error=true
+          cache-to: |
+            type=local,dest=/tmp/buildx-cache-${{ runner.arch }},mode=max,ignore-error=true
+          outputs: type=docker,dest=${{ runner.temp }}/${{ needs.sanitization.outputs.ecr_repository }}-${{ runner.os }}-${{ runner.arch }}.tar
+
+      - name: Upload artifact
+        if: ${{ steps.docker_build.conclusion == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.sanitization.outputs.ecr_repository }}-${{ runner.os }}-${{ runner.arch }}.tar
+          path: ${{ runner.temp }}/${{ needs.sanitization.outputs.ecr_repository }}-${{ runner.os }}-${{ runner.arch }}.tar
+
+      - name: Tag Outputs
+        run: |
+          echo "==============================================="
+          meta_tags=$(echo '${{ steps.meta.outputs.json }}' | jq -c --arg key "${{ matrix.metaTags }}" '{($key): .tags}')
+          echo "${meta_tags}"
+          echo "${meta_tags}" > meta-tags-${{ matrix.metaTags }}.json
+          echo "==============================================="
+
+      - name: Upload matrix result
+        uses: actions/upload-artifact@v7
+        with:
+          name: meta-tags-${{ matrix.metaTags }}
+          path: meta-tags-${{ matrix.metaTags }}.json
+
+  # =============================================================================
+  # AGGREGATE TAGS JOB
+  # =============================================================================
+  aggregate-tags:
+    name: Aggregate Tags
+    needs: [sanitization, checks, version, docker-build]
+    if: |
+      always() &&
+      needs.sanitization.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.version.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]'))
+    runs-on: ${{ inputs.runsOnDefault }}
+    outputs:
+      metaTags: ${{ steps.aggregate.outputs.metaTags }}
+    steps:
+      - name: Download all Meta Tags artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: meta-tags-*
+          merge-multiple: true
+
+      - name: Aggregate all Meta Tags with JQ
+        id: aggregate
+        shell: bash -l {0}
+        run: |
+          META_TAGS=$(jq -s -c 'add' meta-tags-*.json)
+          echo "metaTags=$META_TAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Display all Meta Tags Results
+        shell: bash -l {0}
+        run: |
+          echo "Meta Tags Results: $(echo '${{ steps.aggregate.outputs.metaTags }}' | jq -Sr '.')"
+
+  # =============================================================================
+  # MANIFEST JOB
+  # =============================================================================
+  manifest:
+    name: Docker Multi Architecture Manifest Index
+    runs-on: ${{ inputs.runsOnDefault }}
+    needs: [sanitization, checks, version, docker-build, aggregate-tags]
+    if: |
+      always() &&
+      needs.sanitization.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.version.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      needs.aggregate-tags.result == 'success' &&
+      !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]'))
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/.github/actions/github-auth-checkout@main
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: AWS ECR Setup
+        uses: elioetibr/composite-actions/.github/actions/aws-ecr-setup@main
+        with:
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+
+      - name: Docker Tags
+        id: tags
+        uses: viafoura/docker-tag-generator-action@v1
+        with:
+          semVer: ${{ needs.version.outputs.semVer }}
+
+      - name: Docker Meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.ECR_REPOSITORY_URI }}
+          tags: |
+            ${{ steps.tags.outputs.tags }}
+            type=raw,enable=${{ github.event_name == 'pull_request' }},priority=200,prefix=,suffix=,value=${{ needs.version.outputs.prSemVer }}
+          flavor: |
+            latest=${{ (github.ref_name == github.event.repository.default_branch || needs.checks.outputs.needs-latest == 'true') && steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
+
+      - name: Docker BuildX Setup
+        uses: elioetibr/composite-actions/.github/actions/docker-buildx-setup@main
+
+      - name: Generate and Push Multi Architecture Manifest
+        uses: viafoura/docker-buildx-imagetools-manifest-creator@v0
+        with:
+          ecrRegistry: ${{ env.ECR_REGISTRY }}
+          ecrRepository: ${{ inputs.ecr-repository }}
+          amd64Tags: ${{ toJSON(fromJSON(needs.aggregate-tags.outputs.metaTags).amd64Tags) }}
+          arm64Tags: ${{ toJSON(fromJSON(needs.aggregate-tags.outputs.metaTags).arm64Tags) }}
+          metaTags: ${{ toJSON(fromJSON(steps.meta.outputs.json).tags) }}
+          metaAnnotations: ${{ toJSON(fromJSON(steps.meta.outputs.json).annotations) }}
+          semVer: ${{ needs.version.outputs.semVer }}
+
+      - name: Pushing Tag ${{ needs.version.outputs.semVer }} to ${{ github.ref_name }}
+        if: ${{ github.ref_name == github.event.repository.default_branch }}
+        shell: bash -l {0}
+        env:
+          TAG: ${{ needs.version.outputs.semVer }}
+        run: |
+          #!/usr/bin/env bash
+
+          set -euo pipefail
+
+          git --no-pager tag --list | sort -d | tail -n 30
+
+          git fetch --force --prune --prune-tags --tags origin
+
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists on remote, skipping"
+          else
+            echo "Creating and pushing tag ${TAG}"
+            git tag "${TAG}" -a -m "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+      - name: Add PR comment
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.auth.outputs.token }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: ':rocket: Hey, here is a new version built from this PR: **${{ needs.version.outputs.prSemVer }}** '
+            })
+
+  # =============================================================================
+  # SONARCLOUD UPDATES JOB (Java only)
+  # =============================================================================
+  sonarcloud-updates:
+    name: SonarCloud Updates
+    needs: [version, gradle-build, docker-build, aggregate-tags, manifest]
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: |
+      inputs.build-type == 'java' &&
+      inputs.uses-sonar &&
+      github.ref_name == github.event.repository.default_branch &&
+      needs.version.result == 'success' &&
+      needs.gradle-build.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      needs.aggregate-tags.result == 'success' &&
+      needs.manifest.result == 'success' &&
+      !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]'))
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/.github/actions/github-auth-checkout@main
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: AWS ECR Setup
+        uses: elioetibr/composite-actions/.github/actions/aws-ecr-setup@main
+        with:
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+
+      - name: Get Sonar secrets by name
+        if: ${{ inputs.uses-sonar }}
+        uses: aws-actions/aws-secretsmanager-get-secrets@v3
+        with:
+          secret-ids: |
+            SONAR_TOKEN,/sonar/token
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.jdk-version }}
+          distribution: ${{ inputs.jdk-distribution }}
+
+      - name: Cache SonarCloud packages
+        if: ${{ inputs.uses-sonar }}
+        uses: actions/cache@v5
+        with:
+          path: ~/.sonar/cache
+          key: sonar-${{ runner.os }}-${{ runner.arch }}
+          restore-keys: sonar-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.gradle') }}
+
+      - name: Run build with Gradle Wrapper
+        env:
+          USES_SONAR: ${{ inputs.uses-sonar }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cmd="./gradlew build"
+
+          if [[ "${USES_SONAR}" == "true" ]]; then
+            cmd="${cmd} sonar"
+          fi
+
+          cmd="${cmd} --info --stacktrace"
+
+          echo "Running gradle: ${cmd}"
+          ${cmd}
+
+  # =============================================================================
+  # NOTIFICATION FAILURES JOB
+  # =============================================================================
+  notification_failures:
+    name: Notify on Failure
+    runs-on: ${{ inputs.runsOnDefault }}
+    needs: [sanitization, checks, version, docker-build, aggregate-tags, manifest]
+    if: ${{ failure() && !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]')) }}
+    steps:
+      - name: Send Slack Notification On Failures
+        if: ${{ inputs.slack-send-notification == 'true' }}
+        uses: elioetibr/composite-actions/.github/actions/slack-notification-ci-failure@main
+        with:
+          channel-id: ${{ inputs.slack-channels }}
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}

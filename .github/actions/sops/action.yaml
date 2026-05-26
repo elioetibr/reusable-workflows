@@ -1,0 +1,68 @@
+name: GitHub Composite Actions SOPS Configuration
+description: 'GitHub Composite Actions SOPS Configuration'
+
+inputs:
+  gpg_key_id:
+    required: true
+    description: GPG Key ID
+  token:
+    required: true
+    description: GitHub Token with access to the repository containing the public GPG keys
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout SOPS
+      uses: actions/checkout@v6
+      with:
+        path: .sops
+        ref: main
+        repository: viafoura/sops
+        fetch-depth: 0
+        fetch-tags: true
+        token: ${{ inputs.token }}
+
+    - name: Managing GPG Keys
+      shell: bash -l {0}
+      env:
+        GPG_KEY: ${{ secrets.GPG_KEY }}
+      run: |
+        #!/usr/bin/env bash
+
+        set -euo pipefail
+
+        CWD=$(pwd)
+        PUBLIC_GPG_FOLDER="${CWD}/.sops/gpg-public"
+
+        echo "Importing Private @elioetibr GPG Key"
+        echo "${GPG_KEY}" | base64 --decode | gpg --batch --import
+
+        for key in $(find ${PUBLIC_GPG_FOLDER} -type f -not -name "hello@sre.is-*.pub.asc"); do
+          echo "Importing Public GPG key => ${key}"
+          gpg --import ${key}
+          echo
+        done
+
+        rm -rf .sops
+
+    - name: Set Git Configuration
+      id: git_config
+      shell: bash -l {0}
+      run: |
+        #!/usr/bin/env bash
+
+        set -euo pipefail
+
+        if [[ "${{ github.event.act }}" == "true" ]];
+        then
+          echo "Disabling GPG Configurations..."
+          git config --local --unset commit.gpgsign 2>/dev/null
+          git config --local --unset gpg.program 2>/dev/null
+          git config --local --unset user.signingkey 2>/dev/null
+        else
+          git config --global user.signingkey ${{ inputs.gpg_key_id }}
+          git config --global commit.gpgsign true
+          git config --global format.signoff true
+          git config --global gpg.program gpg
+          git config --global tag.gpgsign true
+        fi

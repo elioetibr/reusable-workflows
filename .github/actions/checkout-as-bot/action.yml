@@ -1,0 +1,75 @@
+---
+name: "Checkout as bot"
+description: >-
+  Generate a GitHub App installation token, check out the repository using
+  that token, and configure git as github-actions[bot]. Returns the token
+  as an output for downstream steps that need authenticated API access.
+
+inputs:
+  client-id:
+    description: "GitHub App Client ID (e.g. vars.CLIENT_ID)."
+    required: true
+  private-key:
+    description: "GitHub App private key (e.g. secrets.PRIVATE_KEY)."
+    required: true
+  owner:
+    description: "App installation owner. Defaults to the current repository owner."
+    required: false
+    default: ${{ github.repository_owner }}
+  repositories:
+    description: "Repositories to grant the token access to. Defaults to the current repository."
+    required: false
+    default: ${{ github.event.repository.name }}
+  ref:
+    description: "Git ref to checkout. Defaults to the PR head SHA on pull_request events, else the workflow SHA."
+    required: false
+    default: ${{ github.event.pull_request.head.sha || github.sha }}
+  fetch-depth:
+    description: "Number of commits to fetch. 0 fetches full history."
+    required: false
+    default: "0"
+  fetch-tags:
+    description: "Whether to fetch tags."
+    required: false
+    default: "true"
+  submodules:
+    description: "Submodule checkout mode (false / true / recursive)."
+    required: false
+    default: "false"
+  persist-credentials:
+    description: "Whether actions/checkout persists the token in the repo's git config."
+    required: false
+    default: "true"
+
+outputs:
+  token:
+    description: "The generated GitHub App installation access token."
+    value: ${{ steps.app-token.outputs.token }}
+  app-slug:
+    description: "The App's slug (e.g. 'my-bot' for 'my-bot[bot]')."
+    value: ${{ steps.app-token.outputs.app-slug }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate GitHub App Token
+      id: app-token
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repositories }}
+        private-key: ${{ inputs.private-key }}
+
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref }}
+        fetch-depth: ${{ inputs.fetch-depth }}
+        fetch-tags: ${{ inputs.fetch-tags }}
+        submodules: ${{ inputs.submodules }}
+        persist-credentials: ${{ inputs.persist-credentials }}
+        token: ${{ steps.app-token.outputs.token }}
+
+    - name: GitHub Actions Bot Setup
+      uses: elioetibr/composite-actions/bot-setup@main

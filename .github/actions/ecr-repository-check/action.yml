@@ -1,0 +1,238 @@
+name: 'Create ECR Repository if Not Exists, and Apply Policy'
+description: >-
+  Check if an ECR private repository exists, and create if it does not.
+  Apply the policy and manage repository lifecycle tags.
+  New repositories created on feature branches are tagged Status=bootstrap
+  and output needs-latest=true so downstream builds include the latest tag.
+  On default branch, bootstrap repositories are promoted to Status=stable.
+author: 'elioseverojunior@gmail.com'
+
+inputs:
+  region:
+    description: 'AWS Region for the ECR repository'
+    required: true
+  repository:
+    description: 'Name of the ECR repository'
+    required: true
+  aws-account-id:
+    description: 'AWS Account ID for constructing the repository ARN'
+    required: false
+    default: '557206274117'
+  is-default-branch:
+    description: 'Whether the current branch is the default branch (true/false)'
+    required: false
+    default: 'false'
+
+outputs:
+  needs-latest:
+    description: 'Whether downstream builds should include the latest tag (true when repo is in bootstrap state)'
+    value: ${{ steps.lifecycle.outputs.needs-latest }}
+  status:
+    description: 'Repository lifecycle status (bootstrap or stable)'
+    value: ${{ steps.lifecycle.outputs.status }}
+  is-new:
+    description: 'Whether the repository was just created (true/false)'
+    value: ${{ steps.repo.outputs.is-new }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check and Create ECR Repository
+      id: repo
+      shell: bash
+      env:
+        AWS_REGION: ${{ inputs.region }}
+        REPOSITORY_NAME: ${{ inputs.repository }}
+      run: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if ! aws ecr describe-repositories \
+          --repository-names "${REPOSITORY_NAME}" \
+          --region "${AWS_REGION}" > /dev/null 2>&1; then
+          echo "ECR repository '${REPOSITORY_NAME}' does not exist. Creating it..."
+          aws ecr create-repository \
+            --repository-name "${REPOSITORY_NAME}" \
+            --region "${AWS_REGION}"
+          echo "Repository '${REPOSITORY_NAME}' created."
+          echo "is-new=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "ECR repository '${REPOSITORY_NAME}' already exists."
+          echo "is-new=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Apply Repository Policy
+      shell: bash
+      env:
+        AWS_REGION: ${{ inputs.region }}
+        REPOSITORY_NAME: ${{ inputs.repository }}
+      run: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        cat > ecr-policy.json << 'EOL'
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "OrganizatonECRAllowPull",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": [
+                        "ecr:BatchCheckLayerAvailability",
+                        "ecr:BatchGetImage",
+                        "ecr:DescribeImages",
+                        "ecr:DescribeRepositories",
+                        "ecr:GetDownloadUrlForLayer"
+                    ],
+                    "Condition": {
+                        "ForAnyValue:StringLike": {
+                            "aws:PrincipalOrgPaths": [
+                                "o-2zmr2z5xni/r-evhb/ou-evhb-7f2hehv7/*",
+                                "o-2zmr2z5xni/r-evhb/ou-evhb-7f2hehv7/ou-evhb-fdze0zej/*",
+                                "o-2zmr2z5xni/r-evhb/ou-evhb-7f2hehv7/ou-evhb-wolltszl/*"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "Sid": "OrganizationECRAdmin",
+                    "Effect": "Allow",
+                    "Principal": {
+                        "AWS": [
+                            "arn:aws:iam::218894879100:role/sre",
+                            "arn:aws:iam::218894879100:role/github-actions-role",
+                            "arn:aws:iam::218894879100:role/devops",
+                            "arn:aws:iam::218894879100:role/terraform",
+                            "arn:aws:iam::557206274117:role/sre",
+                            "arn:aws:iam::557206274117:role/github-actions-role",
+                            "arn:aws:iam::557206274117:role/devops",
+                            "arn:aws:iam::557206274117:role/terraform",
+                            "arn:aws:iam::218894879100:role/Jenkins",
+                            "arn:aws:iam::825534976873:role/main.jenkins.viafoura.ec2"
+                        ]
+                    },
+                    "Action": "ecr:*",
+                    "Condition": {
+                        "ForAnyValue:StringLike": {
+                            "aws:PrincipalOrgPaths": [
+                                "o-2zmr2z5xni/r-evhb/ou-evhb-7f2hehv7/*",
+                                "o-2zmr2z5xni/r-evhb/ou-evhb-7f2hehv7/ou-evhb-fdze0zej/*",
+                                "o-2zmr2z5xni/r-evhb/ou-evhb-7f2hehv7/ou-evhb-wolltszl/*"
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+        EOL
+
+        echo "Setting repository policy for '${REPOSITORY_NAME}'..."
+        aws ecr set-repository-policy \
+          --repository-name "${REPOSITORY_NAME}" \
+          --policy-text file://ecr-policy.json \
+          --region "${AWS_REGION}"
+
+        rm -f ecr-policy.json
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Repository Lifecycle Tags
+    # ─────────────────────────────────────────────────────────────────────────
+    # ECR repositories go through two lifecycle states tracked via AWS
+    # resource tags (Key=Status):
+    #
+    #   bootstrap  → Repository was created on a feature branch. No main
+    #                branch build has run yet, so there is no 'latest' image
+    #                tag. Downstream Dockerfiles that FROM :latest would fail.
+    #                While in this state, needs-latest=true tells the workflow
+    #                to include 'latest' in the docker/metadata-action flavor
+    #                so the first build seeds the tag.
+    #
+    #   stable     → The default branch has built at least once. The normal
+    #                metadata-action flavor (latest=true only on default
+    #                branch) is sufficient. Feature branches no longer need
+    #                to add 'latest'. needs-latest=false.
+    #
+    # Transition table:
+    #   ┌─────────────────────────────────────────────┬──────────────┬──────────────────────┐
+    #   │ Condition                                   │ Status set   │ needs-latest output  │
+    #   ├─────────────────────────────────────────────┼──────────────┼──────────────────────┤
+    #   │ default branch + any state                  │ stable       │ false                │
+    #   │ feature branch + stable                     │ stable       │ false                │
+    #   │ feature branch + new repo (just created)    │ bootstrap    │ true                 │
+    #   │ feature branch + bootstrap (awaiting merge) │ bootstrap    │ true                 │
+    #   │ feature branch + None/untagged (legacy)     │ stable       │ false                │
+    #   └─────────────────────────────────────────────┴──────────────┴──────────────────────┘
+    #
+    # Tags are always applied (idempotent) to ensure metadata stays current.
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Manage Repository Lifecycle Tags
+      id: lifecycle
+      shell: bash
+      env:
+        AWS_REGION: ${{ inputs.region }}
+        REPOSITORY_NAME: ${{ inputs.repository }}
+        AWS_ACCOUNT_ID: ${{ inputs.aws-account-id }}
+        IS_DEFAULT_BRANCH: ${{ inputs.is-default-branch }}
+        IS_NEW_REPO: ${{ steps.repo.outputs.is-new }}
+      run: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        REPO_ARN="arn:aws:ecr:${AWS_REGION}:${AWS_ACCOUNT_ID}:repository/${REPOSITORY_NAME}"
+
+        # Retrieve the current Status resource tag from the ECR repository.
+        # Returns "None" when the repo has no tags or the Status key is absent.
+        CURRENT_STATUS=$(aws ecr list-tags-for-resource \
+          --resource-arn "${REPO_ARN}" \
+          --region "${AWS_REGION}" \
+          --query "tags[?Key=='Status'].Value | [0]" \
+          --output text 2>/dev/null || echo "None")
+
+        echo "Current repo status: ${CURRENT_STATUS}"
+
+        # Helper: apply standard resource tags with a given Status value.
+        apply_tags() {
+          local status="$1"
+          aws ecr tag-resource \
+            --resource-arn "${REPO_ARN}" \
+            --region "${AWS_REGION}" \
+            --tags \
+              Key=Type,Value="Private Registry" \
+              Key=Team,Value=sre \
+              Key=Name,Value="${REPOSITORY_NAME}" \
+              Key=Status,Value="${status}"
+        }
+
+        # Determine the target status and needs-latest output based on
+        # repo state and branch context.
+        if [[ "${IS_DEFAULT_BRANCH}" == "true" ]]; then
+          # Default branch always promotes to stable.
+          # bootstrap→stable on first merge; None→stable for legacy repos.
+          TARGET_STATUS="stable"
+          NEEDS_LATEST="false"
+        elif [[ "${CURRENT_STATUS}" == "stable" ]]; then
+          # Stable repo on a feature branch — no change needed.
+          TARGET_STATUS="stable"
+          NEEDS_LATEST="false"
+        elif [[ "${IS_NEW_REPO}" == "true" ]]; then
+          # Genuinely new repo created on a feature branch — needs latest
+          # to seed the tag for downstream Dockerfiles.
+          TARGET_STATUS="bootstrap"
+          NEEDS_LATEST="true"
+        elif [[ "${CURRENT_STATUS}" == "bootstrap" ]]; then
+          # Repo still in bootstrap (created on feature branch, no default
+          # branch build yet) — keep bootstrap until promoted.
+          TARGET_STATUS="bootstrap"
+          NEEDS_LATEST="true"
+        else
+          # Legacy/existing repo with no Status tag (None) or unexpected value.
+          # Repo already exists with images — treat as stable.
+          TARGET_STATUS="stable"
+          NEEDS_LATEST="false"
+        fi
+
+        echo "Target status: ${TARGET_STATUS} (current: ${CURRENT_STATUS})"
+        apply_tags "${TARGET_STATUS}"
+        echo "status=${TARGET_STATUS}" >> "$GITHUB_OUTPUT"
+        echo "needs-latest=${NEEDS_LATEST}" >> "$GITHUB_OUTPUT"

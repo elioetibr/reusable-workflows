@@ -1,0 +1,289 @@
+name: Docker Build Composite Action
+description: This Composite Action streamlines the creation of Docker Build.
+
+inputs:
+  # Required inputs
+  client-id:
+    description: GitHub App Client ID
+    required: true
+  aws-account-id:
+    description: AWS Account ID
+    required: true
+  dockerfilePath:
+    description: Docker Path
+    required: true
+  ecrRegistry:
+    description: Registry Name
+    required: true
+  ecrRepository:
+    description: Repository Name
+    required: true
+  owner:
+    description: GitHub Organization Owner / GitHub Personal Account
+    required: true
+  private-key:
+    description: GitHub App Secret Key
+    required: true
+  region:
+    description: AWS Region
+    required: true
+  repositories:
+    description: GitHub Repository Name
+    required: true
+  role-name:
+    description: AWS GitHub OIDC Role Name
+    required: true
+  semver:
+    description: Semantic Versioning
+    required: true
+  sendSlackNotification:
+    description: Send Slack Notification
+    required: true
+  sha:
+    description: Commit SHA
+    required: true
+  shortSha:
+    description: Commit Short SHA
+    required: true
+  targetArch:
+    description: The Target Architecture (e.g. amd64 arm64)
+    required: true
+  versionSpec:
+    description: GitVersion Version Specification
+    required: true
+
+  # Optional inputs
+  context:
+    default: .
+    description: Dockerfile Directory
+    required: false
+  create-latest-tag:
+    default: 'false'
+    description: 'Create and push the latest tag alongside the version tag'
+    required: false
+  image:
+    description: Image Name
+    required: false
+    default: ''
+  platform:
+    description: The Platform (e.g. linux/amd64 linux/arm64)
+    required: false
+    default: ''
+  provenance:
+    default: 'false'
+    description: Generate provenance attestations
+    required: false
+  push:
+    description: Push Image after Build
+    required: false
+    default: 'true'
+  sonarToken:
+    description: SonarCloud Token
+    required: false
+    default: ''
+  tag:
+    description: Image Tag Version
+    required: false
+    default: ''
+
+outputs:
+  architecture:
+    description: "Target architecture for the build"
+    value: ${{ steps.tags.outputs.architecture }}
+  buildDatetime:
+    description: "Build date and time information"
+    value: ${{ steps.tags.outputs.buildDatetime }}
+  platform:
+    description: "Target platform for the build"
+    value: ${{ steps.tags.outputs.platform }}
+  refName:
+    description: "Reference name (branch or tag)"
+    value: ${{ steps.tags.outputs.refName }}
+  runAttempt:
+    description: "Workflow run attempt number"
+    value: ${{ steps.tags.outputs.runAttempt }}
+  semVer:
+    description: "Semantic version"
+    value: ${{ steps.tags.outputs.semVer }}
+  sha:
+    description: "Git commit SHA"
+    value: ${{ steps.tags.outputs.sha }}
+  shaShort:
+    description: "Short Git commit SHA"
+    value: ${{ steps.tags.outputs.shaShort }}
+  suffix:
+    description: "Tag suffix"
+    value: ${{ steps.tags.outputs.suffix }}
+  tags:
+    description: "Docker image tags"
+    value: ${{ steps.tags.outputs.tags }}
+  tagsJson:
+    description: "Docker image tags in JSON format"
+    value: ${{ steps.tags.outputs.tagsJson }}
+  metaVersion:
+    description: "Metadata version info"
+    value: ${{ steps.meta.outputs.version }}
+  metaTags:
+    description: "Metadata tags info"
+    value: ${{ steps.meta.outputs.tags }}
+  metaLabels:
+    description: "Metadata labels info"
+    value: ${{ steps.meta.outputs.labels }}
+  metaAnnotations:
+    description: "Metadata annotations info"
+    value: ${{ steps.meta.outputs.annotations }}
+  metaJson:
+    description: "Metadata in JSON format"
+    value: ${{ steps.meta.outputs.json }}
+
+runs:
+  using: composite
+  steps:
+  - name: Set up GitHub Bot Configuration
+    id: elioetibr-bot
+    uses: elioetibr/composite-actions/github-bot-config@main
+
+  - name: Generate GitHub App Token
+    uses: actions/create-github-app-token@v3
+    id: app-token
+    with:
+      client-id: ${{ inputs.client-id }}
+      private-key: ${{ inputs.private-key }}
+      owner: ${{ inputs.owner }}
+      repositories: ${{ inputs.repositories }}
+
+  - name: Checkout
+    uses: actions/checkout@v6
+    with:
+      fetch-depth: 0
+      fetch-tags: true
+      token: ${{ steps.app-token.outputs.token }}
+
+  - name: Docker Tags
+    id: tags
+    uses: viafoura/docker-tag-generator-action@v1
+    with:
+      semVer: ${{ inputs.semver }}
+      platform: ${{ inputs.platform }}
+
+  - name: Docker Meta
+    id: meta
+    uses: docker/metadata-action@v6
+    with:
+      images: ${{ inputs.ecrRegistry }}/${{ inputs.ecrRepository }}
+      tags: |
+        ${{ steps.tags.outputs.tags }}
+      flavor: |
+        latest=${{ github.ref_name == github.event.repository.default_branch && inputs.create-latest-tag == 'true' }}
+
+  - name: Set up Docker BuildX
+    uses: docker/setup-buildx-action@v3
+
+  - name: AWS STS Assume Role 218894879100
+    id: creds-testdev
+    uses: aws-actions/configure-aws-credentials@v6
+    with:
+      role-to-assume: arn:aws:iam::218894879100:role/github-actions-role
+      aws-region: ${{ inputs.region }}
+      mask-aws-account-id: 'false'
+      role-duration-seconds: 900
+      role-session-name: ViafouraGitHubActionsTestDev
+
+  - name: Login to Amazon ECR 218894879100
+    id: login-ecr-testdev
+    uses: aws-actions/amazon-ecr-login@v2
+    with:
+      mask-password: 'true'
+
+  - name: AWS STS Assume Role 557206274117
+    id: creds-cicd
+    uses: aws-actions/configure-aws-credentials@v6
+    with:
+      role-to-assume: arn:aws:iam::557206274117:role/github-actions-role
+      aws-region: ${{ inputs.region }}
+      mask-aws-account-id: 'false'
+      role-duration-seconds: 900
+      role-session-name: ViafouraGitHubActionsCICD
+
+  - name: Login to Amazon ECR 557206274117
+    id: login-ecr-cicd
+    uses: aws-actions/amazon-ecr-login@v2
+    with:
+      mask-password: 'true'
+
+  - name: AWS STS Assume Role
+    id: creds
+    uses: aws-actions/configure-aws-credentials@v6
+    with:
+      role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/${{ inputs.role-name }}
+      aws-region: ${{ inputs.region }}
+      mask-aws-account-id: 'false'
+      role-duration-seconds: 900
+      role-session-name: ViafouraGitHubActions
+      output-credentials: true
+
+  - name: Login to Amazon ECR
+    id: login-ecr
+    uses: aws-actions/amazon-ecr-login@v2
+    with:
+      mask-password: 'true'
+
+  - name: Create ECR Private Repository if Not Exists
+    uses: elioetibr/composite-actions/ecr-repository-check@main
+    id: ecr-repository-check
+    with:
+      repository: ${{ inputs.ecrRepository }}
+      region: ${{ inputs.region }}
+
+  - name: Docker Build
+    id: docker_build
+    uses: docker/build-push-action@v7
+    with:
+      context: ${{ inputs.context }}
+      file: ${{ inputs.dockerfilePath }}
+      build-args: |
+        BRANCH_NAME=${{ github.ref_name }}
+        BUILD_TIME=${{ github.event.created_at }}
+        COMMITSHA=${{ inputs.sha }}
+        COMMITSHASHORT=${{ inputs.shortSha }}
+        GITHUB_REPOSITORY=${{ github.repository }}
+        IMAGE=${{ inputs.image }}
+        PR_BASE=${{ github.event.pull_request.base.ref || '' }}
+        PR_BRANCH=${{ github.event.pull_request.head.ref || '' }}
+        PR_KEY=${{ github.event.pull_request.number || '' }}
+        TAG=${{ inputs.tag }}
+        TARGETARCH=${{ inputs.targetArch }}
+        TARGETPLATFORM=${{ inputs.platform }}
+        PROJECT_VERSION=${{ inputs.semver }}
+        VERSION=${{ inputs.semver }}
+      secrets: |
+        "AWS_ACCESS_KEY_ID=${{ steps.creds.outputs.aws-access-key-id }}"
+        "AWS_SECRET_ACCESS_KEY=${{ steps.creds.outputs.aws-secret-access-key }}"
+        "AWS_SESSION_TOKEN=${{ steps.creds.outputs.aws-session-token }}"
+        "GITHUB_TOKEN=${{ steps.app-token.outputs.token }}"
+        "SONAR_TOKEN=${{ inputs.sonarToken }}"
+      labels: ${{ steps.meta.outputs.labels }}
+      platforms: ${{ inputs.platform }}
+      provenance: ${{ inputs.provenance }}
+      push: ${{ inputs.push }}
+      tags: ${{ steps.meta.outputs.tags }}
+
+  - name: Checking Outputs
+    shell: bash -l {0}
+    run: |
+      echo 'architecture: ${{ steps.tags.outputs.architecture }}'
+      echo 'buildDatetime: ${{ steps.tags.outputs.buildDatetime }}'
+      echo 'platform: ${{ steps.tags.outputs.platform }}'
+      echo 'refName: ${{ steps.tags.outputs.refName }}'
+      echo 'runAttempt: ${{ steps.tags.outputs.runAttempt }}'
+      echo 'semVer: ${{ steps.tags.outputs.semVer }}'
+      echo 'sha: ${{ steps.tags.outputs.sha }}'
+      echo 'shaShort: ${{ steps.tags.outputs.shaShort }}'
+      echo 'suffix: ${{ steps.tags.outputs.suffix }}'
+      echo 'tags: ${{ steps.tags.outputs.tags }}'
+      echo 'tagsJson: ${{ steps.tags.outputs.tagsJson }}'
+      echo 'metaVersion: ${{ steps.meta.outputs.version }}'
+      echo 'metaTags: ${{ steps.meta.outputs.tags }}'
+      echo 'metaLabels: ${{ steps.meta.outputs.labels }}'
+      echo 'metaAnnotations: ${{ steps.meta.outputs.annotations }}'
+      echo 'metaJson: ${{ steps.meta.outputs.json }}'

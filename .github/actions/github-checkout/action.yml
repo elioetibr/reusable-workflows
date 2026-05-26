@@ -1,0 +1,26 @@
+name: GitHub Composite Actions Checkout
+description: 'GitHub Composite Actions Checkout'
+
+inputs:
+  fetch-depth:
+    description: Git Fetch Depth
+    required: false
+    default: '0'
+  fetch-tags:
+    description: Git Fetch Tags
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout code
+      id: checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+        fetch-tags: ${{ inputs.fetch-tags }}
+
+    - name: Setting GitHub Bot Configuration
+      id: elioetibr-bot
+      uses: ./github-bot-config

@@ -1,0 +1,216 @@
+name: Multi-Arch Docker Pipeline
+
+# Wrapper workflow for Docker-only multi-architecture builds
+# Calls the unified build-multi-arch.yml workflow with build-type: docker
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+  checks: write
+  packages: write
+
+on:
+  workflow_call:
+    inputs:
+      # AWS Configuration
+      aws-account-id:
+        default: ${{ vars.AWS_CICD_ACCOUNT_ID }}
+        description: AWS Account ID
+        required: false
+        type: string
+
+      aws-region:
+        default: ${{ vars.AWS_REGION }}
+        description: AWS Region
+        required: false
+        type: string
+
+      aws-role-name:
+        default: ${{ vars.AWS_CICD_CROSS_ACCOUNT_ROLE }}
+        description: AWS GitHub OIDC Role Name
+        required: false
+        type: string
+
+      ecr-registry:
+        required: false
+        type: string
+        description: "ECR Registry"
+
+      ecr-repository:
+        required: false
+        type: string
+        default: ${{ github.event.repository.name }}
+        description: "ECR repository name for Docker images"
+
+      # GitHub Configuration
+      client-id:
+        default: ${{ vars.CLIENT_ID }}
+        description: GitHub App Client ID
+        required: false
+        type: string
+
+      build-date-time:
+        default: ${{ github.event.created_at }}
+        description: Build Date Time
+        required: false
+        type: string
+
+      owner:
+        default: ${{ github.repository_owner }}
+        description: GitHub Organization Owner / GitHub Personal Account
+        required: false
+        type: string
+
+      repository:
+        default: ${{ github.event.repository.name }}
+        description: GitHub Repository Name
+        required: false
+        type: string
+
+      runsOnDefault:
+        required: false
+        type: string
+        default: "ubuntu-latest"
+        description: "Default runner for non-arch-specific jobs"
+
+      runsOnAmd64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_AMD64 }}
+        description: "Runner for AMD64 architecture builds"
+
+      runsOnArm64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_ARM64 }}
+        description: "Runner for ARM64 architecture builds"
+
+      # Docker Configuration
+      dockerfile-path:
+        default: "./Dockerfile"
+        description: Docker Path
+        required: true
+        type: string
+
+      context:
+        default: .
+        description: Dockerfile Directory
+        required: false
+        type: string
+
+      fail-fast:
+        default: true
+        description: Fail workflow fast if a job fails
+        required: false
+        type: boolean
+
+      image:
+        description: Image Name
+        required: false
+        type: string
+
+      platform:
+        default: ""
+        description: Platform architecture
+        required: false
+        type: string
+
+      provenance:
+        default: ${{ vars.DOCKER_BUILD_PROVENANCE }}
+        description: Enable SLSA provenance
+        required: false
+        type: string
+
+      push:
+        default: ${{ vars.DOCKER_BUILD_PUSH }}
+        description: Push Image after Build
+        required: false
+        type: string
+
+      sendSlackNotification:
+        default: ${{ vars.SLACK_SEND_NOTIFICATIONS }}
+        description: Send Slack Notification
+        required: false
+        type: string
+
+      slackChannels:
+        default: ${{ vars.SLACK_VIAFOURA_CHANNELS }}
+        description: Slack channels for notifications
+        required: false
+        type: string
+
+      sonarCloudScan:
+        default: ${{ vars.SONAR_SCAN }}
+        description: To Execute SonarCloud Scan
+        required: false
+        type: string
+
+      tag:
+        description: Image Tag Version
+        required: false
+        type: string
+
+      versionSpec:
+        default: ${{ vars.GITVERSION_SPEC || '6.x'}}
+        description: GitVersion Version Specification
+        required: false
+        type: string
+
+      create-latest-tag:
+        default: ${{ vars.DOCKER_TAG_LATEST || 'false' }}
+        description: Create and push the latest tag alongside the version tag
+        required: false
+        type: string
+
+    secrets:
+      PRIVATE_KEY:
+        required: true
+      SLACK_VIAFOURA_TOKEN:
+        required: true
+      SONAR_TOKEN:
+        required: true
+
+    outputs:
+      version:
+        description: "The version calculated by GitVersion"
+        value: ${{ jobs.build.outputs.version }}
+      semVer:
+        description: "The semantic version"
+        value: ${{ jobs.build.outputs.semVer }}
+      shortSha:
+        description: "Short SHA of the commit"
+        value: ${{ jobs.build.outputs.shortSha }}
+
+jobs:
+  build:
+     # TODO: This is a ugly workaround until we can version reusable workflows.
+     #  We need to pin to a specific commit SHA to avoid breaking changes dynamically
+     #  changing the workflow.
+    uses: elioetibr/composite-actions/.github/workflows/build-multi-arch.yml@main
+    with:
+      build-type: docker
+      aws-account-id: ${{ inputs.aws-account-id }}
+      aws-region: ${{ inputs.aws-region }}
+      aws-role-name: ${{ inputs.aws-role-name }}
+      ecr-registry: ${{ inputs.ecr-registry }}
+      ecr-repository: ${{ inputs.ecr-repository }}
+      client-id: ${{ inputs.client-id }}
+      owner: ${{ inputs.owner }}
+      repository: ${{ inputs.repository }}
+      runsOnDefault: ${{ inputs.runsOnDefault }}
+      runsOnAmd64: ${{ inputs.runsOnAmd64 }}
+      runsOnArm64: ${{ inputs.runsOnArm64 }}
+      dockerfile-path: ${{ inputs.dockerfile-path }}
+      context: ${{ inputs.context }}
+      fail-fast: ${{ inputs.fail-fast }}
+      provenance: ${{ inputs.provenance }}
+      push: ${{ inputs.push }}
+      slack-send-notification: ${{ inputs.sendSlackNotification }}
+      slack-channels: ${{ inputs.slackChannels }}
+      versionSpec: ${{ inputs.versionSpec }}
+      create-latest-tag: ${{ inputs.create-latest-tag }}
+    secrets:
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_VIAFOURA_TOKEN }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

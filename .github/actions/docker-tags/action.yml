@@ -1,0 +1,43 @@
+name: Docker Tags
+description: Composite Action streamlines the creation of Docker tags,
+  making it a breeze to manage and organize our projects efficiently.
+
+inputs:
+  architecture:
+    required: false
+    description: The Platform (e.g. amd64 or arm64)
+  platform:
+    required: false
+    description: The Platform (e.g. linux/amd64 or linux/arm64)
+  semver:
+    description: Semantic Version (e.g. 1.2.3 or e.g. 1.2.3-rc1 or e.g. 1.2.3-rc1+build123 or e.g. 1.2.3-rc1+build123-1)
+    required: true
+  suffix:
+    required: false
+    description: 'Docker Tag Suffix'
+  create-latest-tag:
+    default: 'false'
+    description: 'Create and push the latest tag alongside the version tag'
+    required: false
+
+outputs:
+  docker_tags_json:
+    description: 'Docker Tags Json'
+    value: ${{ steps.tags.outputs.tagsList }}
+  tags:
+    description: 'Docker Tags'
+    value: ${{ steps.tags.outputs.tags }}
+  version:
+    description: 'Docker Tag Version'
+    value: ${{ steps.tags.outputs.semVer }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generating Docker Tags
+      id: tags
+      uses: viafoura/docker-tag-generator-action@v1
+      with:
+        platform: ${{ inputs.platform }}
+        semVer: ${{ inputs.semver }}
+        latest: ${{ inputs.create-latest-tag }}

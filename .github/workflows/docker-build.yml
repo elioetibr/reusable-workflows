@@ -1,0 +1,287 @@
+name: CI Pipeline
+
+permissions:
+  contents: write
+  id-token: write
+
+on:
+  workflow_call:
+    inputs:
+      client-id:
+        default: ${{ vars.CLIENT_ID }}
+        required: false
+        description: GitHub App Client ID
+        type: string
+      owner:
+        default: ${{ github.repository_owner }}
+        required: false
+        description: GitHub Organization Owner / GitHub Personal Account
+        type: string
+      push:
+        default: ${{ vars.DOCKER_BUILD_PUSH || 'true' }}
+        required: false
+        description: Push Image after Build
+        type: string
+      use-qemu:
+        default: ${{ vars.DOCKER_BUILD_USE_QEMU || 'false' }}
+        required: false
+        description: Use QEMU for Multi-Architecture Builds
+        type: string
+      provenance:
+        default: ${{ vars.DOCKER_BUILD_PROVENANCE || 'false' }}
+        required: false
+        description: Enable build provenance / SLSA attestation generation
+        type: string
+      versionSpec:
+        default: ${{ vars.GITVERSION_SPEC || '6.x' }}
+        required: false
+        description: GitVersion Version Specification
+        type: string
+      region:
+        default: ${{ vars.AWS_REGION || 'us-east-1' }}
+        required: false
+        description: AWS Region
+        type: string
+      aws-account-id:
+        default: ${{ vars.AWS_ACCOUNT_ID || '557206274117' }}
+        required: false
+        description: AWS Account ID
+        type: string
+      additional-registries:
+        description: 'Comma-separated list of ECR registries to login to. default (218894879100 - testdev).'
+        required: false
+        type: string
+        default: '218894879100'
+      aws-role-name:
+        default: ${{ vars.AWS_CICD_CROSS_ACCOUNT_ROLE || 'github-actions-role' }}
+        description: AWS GitHub OIDC Role Name
+        required: false
+        type: string
+      context:
+        default: .
+        required: false
+        description: Dockerfile Directory
+        type: string
+      platforms:
+        default: ${{ vars.DOCKER_BUILD_PLATFORM || 'linux/amd64' }}
+        required: false
+        description: Image Build Platforms
+        type: string
+      ecrRepository:
+        required: true
+        description: Repository Name
+        type: string
+      ecrRegistry:
+        default: ${{ vars.REGISTRY || '218894879100.dkr.ecr.us-east-1.amazonaws.com' }}
+        required: false
+        description: Registry Name
+        type: string
+      dockerfilePath:
+        required: true
+        description: Docker Path
+        type: string
+      image:
+        required: true
+        description: Image Name
+        type: string
+      tag:
+        required: true
+        description: Image Tag Version
+        type: string
+      send_slack_notification:
+        default: ${{ vars.SLACK_SEND_NOTIFICATIONS || 'true' }}
+        required: false
+        description: Send Slack Notification
+        type: string
+      runs-on:
+        default: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+        required: false
+        description: Set where GitHub Actions Workflow will be executed
+        type: string
+
+      create-latest-tag:
+        default: ${{ vars.DOCKER_TAG_LATEST || 'false' }}
+        required: false
+        description: Create and push the latest tag alongside the version tag
+        type: string
+
+    secrets:
+      PRIVATE_KEY:
+        required: true
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ${{ inputs.runs-on }}
+    if: ${{ !contains(github.event.head_commit.message, 'ci skip') && !contains(github.event.head_commit.message, '[skip ci]') }}
+    outputs:
+      major: ${{ steps.gitversion.outputs.Major }}
+      minor: ${{ steps.gitversion.outputs.Minor }}
+      patch: ${{ steps.gitversion.outputs.Patch }}
+      semver: ${{ steps.gitversion.outputs.SemVer }}
+      sha: ${{ steps.gitversion.outputs.Sha }}
+      shortSha: ${{ steps.gitversion.outputs.ShortSha }}
+      dockerfile: ${{ inputs.dockerfilePath }}
+
+    steps:
+      - name: Set up GitHub Bot Configuration
+        id: viafoura-bot
+        uses: elioetibr/composite-actions/.github/actions/github-bot-config@main
+
+      - name: Generate GitHub App Token
+        uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Install GitVersion
+        id: install_gitversion
+        uses: gittools/actions/gitversion/setup@v4.5.0
+        with:
+          versionSpec: ${{ inputs.versionSpec }}
+
+      - name: Determine Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4.5.0
+
+  build:
+    name: Docker Build and Push
+    runs-on: ${{ inputs.runs-on }}
+    needs: [prepare]
+    if: ${{ success() && !contains(github.event.head_commit.message, 'ci skip') && !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - name: Set up GitHub Bot Configuration
+        id: viafoura-bot
+        uses: elioetibr/composite-actions/.github/actions/github-bot-config@main
+
+      - name: Generate GitHub App Token
+        uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: AWS ECR Setup
+        id: creds
+        uses: elioetibr/composite-actions/.github/actions/aws-ecr-setup@main
+        with:
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+          additional-registries: ${{ inputs.additional-registries }}
+
+      - name: Create ECR Private Repository if Not Exists
+        uses: elioetibr/composite-actions/.github/actions/ecr-repository-check@main
+        id: ecr-repository-check
+        with:
+          repository: ${{ inputs.ecrRepository }}
+          region: ${{ inputs.region }}
+          aws-account-id: ${{ inputs.aws-account-id }}
+          is-default-branch: ${{ github.ref_name == github.event.repository.default_branch }}
+
+      - name: Docker Tags
+        id: docker-tags
+        uses: elioetibr/composite-actions/.github/actions/docker-tags@main
+        with:
+          semver: ${{ needs.prepare.outputs.semver }}
+
+      - name: Docker Meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ inputs.ecrRegistry }}/${{ inputs.ecrRepository }}
+          tags: |
+            ${{ steps.docker-tags.outputs.tags }}
+          flavor: |
+            latest=${{ (github.ref_name == github.event.repository.default_branch || steps.ecr-repository-check.outputs.needs-latest == 'true') && inputs.create-latest-tag == 'true' }}
+
+      - name: Set up QEMU
+        if: ${{ inputs.platforms && inputs.platforms != 'linux/amd64' && inputs.use-qemu == 'true' }}
+        uses: docker/setup-qemu-action@v4
+
+      - name: Docker BuildX Setup
+        uses: elioetibr/composite-actions/.github/actions/docker-buildx-setup@main
+
+      - name: Docker Build and Push
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfilePath }}
+          build-args: |
+            COMMITSHA=${{ needs.prepare.outputs.sha }}
+            COMMITSHASHORT=${{ needs.prepare.outputs.shortSha }}
+            VERSION=${{ needs.prepare.outputs.semver }}
+            IMAGE=${{ inputs.image }}
+            TAG=${{ inputs.tag }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ inputs.platforms }}
+          provenance: ${{ inputs.provenance }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          secrets: |
+            "AWS_ACCESS_KEY_ID=${{ steps.creds.outputs.aws-access-key-id }}"
+            "AWS_SECRET_ACCESS_KEY=${{ steps.creds.outputs.aws-secret-access-key }}"
+            "AWS_SESSION_TOKEN=${{ steps.creds.outputs.aws-session-token }}"
+
+      - name: Pushing Tag ${{ needs.version.outputs.semVer }} to ${{ github.ref_name }}
+        if: ${{ github.ref_name == github.event.repository.default_branch }}
+        shell: bash -l {0}
+        env:
+          TAG: ${{ needs.version.outputs.semVer }}
+        run: |
+          #!/usr/bin/env bash
+
+          set -euo pipefail
+
+          git --no-pager tag --list | sort -d | tail -n 30
+
+          git fetch --force --prune --prune-tags --tags origin
+
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists on remote, skipping"
+          else
+            echo "Creating and pushing tag ${TAG}"
+            git tag "${TAG}" -a -m "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+    outputs:
+      major: ${{ needs.prepare.outputs.major }}
+      minor: ${{ needs.prepare.outputs.minor }}
+      patch: ${{ needs.prepare.outputs.patch }}
+      semver: ${{ needs.prepare.outputs.semver }}
+      sha: ${{ needs.prepare.outputs.sha }}
+      shortSha: ${{ needs.prepare.outputs.shortSha }}
+
+  notification_failures:
+    name: Notify by Slack when Fails
+    runs-on: ${{ inputs.runs-on }}
+    needs:
+      - prepare
+      - build
+    if: ${{ failure() && !contains(github.event.head_commit.message, 'ci skip') && !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - name: Send Slack Notification On Failures
+        if: ${{ inputs.send_slack_notification == 'true' }}
+        uses: elioetibr/composite-actions/.github/actions/slack-notification-ci-failure@main
+        with:
+          channel-id: ${{ vars.SLACK_VIAFOURA_CHANNELS }}
+          slack-bot-token: ${{ secrets.SLACK_VIAFOURA_TOKEN }}

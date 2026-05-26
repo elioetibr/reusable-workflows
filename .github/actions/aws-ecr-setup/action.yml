@@ -1,0 +1,112 @@
+name: 'AWS ECR Setup'
+description: 'Configure AWS credentials via OIDC and login to Amazon ECR'
+author: 'elioseverojunior@gmail.com'
+
+inputs:
+  aws-account-id:
+    description: 'AWS Account ID'
+    required: false
+    default: '557206274117'
+  aws-region:
+    description: 'AWS Region'
+    required: false
+    default: 'us-east-1'
+  aws-role-name:
+    description: 'AWS IAM Role Name for OIDC'
+    required: false
+    default: 'github-actions-role'
+  additional-registries:
+    description: 'Comma-separated list of ECR registries to login to. If empty, logs in to the default registry for the account.'
+    required: false
+    default: ''
+  role-duration-seconds:
+    description: 'Role session duration in seconds'
+    required: false
+    default: '900'
+  role-session-name:
+    description: 'Role session name'
+    required: false
+    default: 'ViafouraGitHubActions'
+  mask-aws-account-id:
+    description: 'Mask AWS Account ID in logs'
+    required: false
+    default: 'false'
+
+outputs:
+  aws-access-key-id:
+    description: 'AWS Access Key ID'
+    value: ${{ steps.creds.outputs.aws-access-key-id }}
+  aws-secret-access-key:
+    description: 'AWS Secret Access Key'
+    value: ${{ steps.creds.outputs.aws-secret-access-key }}
+  aws-session-token:
+    description: 'AWS Session Token'
+    value: ${{ steps.creds.outputs.aws-session-token }}
+  registry:
+    description: 'ECR Registry URL for primary account'
+    value: ${{ steps.login-ecr.outputs.registry }}
+  additional-registries:
+    description: 'Comma-separated list of additional ECR Registry URLs'
+    value: ${{ steps.login-ecr-registries.outputs.registry }}
+  all-registries:
+    description: 'Comma-separated list of all ECR Registry URLs (primary + additional)'
+    value: ${{ steps.format-registries.outputs.all-registries }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Deduplicate AWS Account IDs
+      id: deduped-accounts
+      shell: bash -l {0}
+      env:
+        CICD_ACCOUNT_ID: '557206274117'
+      run: |
+        # Collect all account IDs and deduplicate (POSIX-compatible, no bash 4.0+ required)
+        accounts="${{ inputs.aws-account-id }}"
+        accounts="${accounts},${CICD_ACCOUNT_ID}"
+        if [ -n "${{ inputs.additional-registries }}" ]; then
+          accounts="${accounts},${{ inputs.additional-registries }}"
+        fi
+        deduped_list=$(echo "$accounts" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+        echo "registries=$deduped_list" >> "$GITHUB_OUTPUT"
+
+    - name: AWS STS Assume Role
+      id: creds
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::${{ inputs.aws-account-id || '557206274117' }}:role/${{ inputs.aws-role-name || 'github-actions-role' }}
+        aws-region: ${{ inputs.aws-region || 'us-east-1' }}
+        mask-aws-account-id: ${{ inputs.mask-aws-account-id || 'false' }}
+        role-duration-seconds: ${{ inputs.role-duration-seconds || '900' }}
+        role-session-name: ${{ inputs.role-session-name || 'ViafouraGitHubActions' }}
+        output-credentials: true
+
+    - name: Login to Amazon ECR
+      id: login-ecr-registries
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        mask-password: 'true'
+        registries: ${{ steps.deduped-accounts.outputs.registries }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        mask-password: 'true'
+
+    - name: Format All Registries Output
+      id: format-registries
+      shell: bash -l {0}
+      run: |
+        PRIMARY_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+        ADDITIONAL_REGISTRIES="${{ steps.login-ecr-registries.outputs.registry }}"
+
+        if [ -z "$ADDITIONAL_REGISTRIES" ]; then
+          echo "all-registries=$PRIMARY_REGISTRY" >> "$GITHUB_OUTPUT"
+        else
+          # Combine and deduplicate registries
+          ALL_REGISTRIES="$PRIMARY_REGISTRY,$ADDITIONAL_REGISTRIES"
+          # Remove duplicate entries
+          DEDUPED=$(echo "$ALL_REGISTRIES" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+          echo "all-registries=$DEDUPED" >> "$GITHUB_OUTPUT"
+        fi

@@ -1,0 +1,17 @@
+{
+  "act": true,
+  "action": "workflow_dispatch",
+  "ref": "refs/main",
+  "ref_name": "main",
+  "inputs": {
+    "platform": "linux/amd64",
+    "runs-on": "ubuntu-latest",
+    "semver": "1.2.3-rc1+build123",
+    "sha": "02313ba9e26f183d061a038cc333250ebbcc3df2",
+    "shortSha": "02313ba"
+  },
+  "repository": {
+    "default_branch": "main",
+    "name": "composite-actions"
+  }
+}

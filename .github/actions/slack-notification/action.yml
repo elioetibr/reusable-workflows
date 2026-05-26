@@ -1,0 +1,29 @@
+name: Slack Notification with Payload and Update Message
+description: 'Slack Notification with Payload and Update Message'
+
+inputs:
+  channel-id:
+    required: true
+    description: Slack Channels IDs
+  slack-bot-token:
+    required: true
+    description: Slack Bot Token
+  payload:
+    required: true
+    description: Slack Payload
+  update-ts:
+    required: false
+    description: Update Slack Thread
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - id: slack
+      uses: slackapi/slack-github-action@v2.0.0
+      with:
+        channel-id: '${{ inputs.channel-id }}'
+        payload: '${{ inputs.channel-id }}'
+        update-ts: ${{ inputs.update-ts }}
+      env:
+        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}

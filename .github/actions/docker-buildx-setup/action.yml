@@ -1,0 +1,23 @@
+name: 'Docker BuildX Setup'
+description: 'Configure Docker BuildX with ECR-hosted BuildKit image'
+author: 'elioseverojunior@gmail.com'
+
+inputs:
+  buildkit-image:
+    description: 'BuildKit image URI'
+    required: false
+    default: 'moby/buildkit:latest'
+  network:
+    description: 'Docker network mode'
+    required: false
+    default: 'host'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Docker BuildX
+      uses: docker/setup-buildx-action@v4
+      with:
+        driver-opts: |
+          image=${{ inputs.buildkit-image }}
+          network=${{ inputs.network }}

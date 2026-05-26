@@ -1,0 +1,85 @@
+name: GitHub Composite Actions Checkout
+description: 'GitHub Composite Actions Checkout'
+
+inputs:
+  versionSpec:
+    description: GitVersion Version Specification
+    required: true
+  configFilePath:
+    description: Optional path to config file (defaults to GitVersion.yml)
+    required: false
+    default: 'GitVersion.yml'
+  preferLatestVersion:
+    description: Prefer to download the latest version matching the versionSpec, even if there is a local cached version.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Install GitVersion
+      id: installGitversion
+      uses: gittools/actions/gitversion/setup@v4.5.0
+      with:
+        versionSpec: ${{ inputs.versionSpec }}
+        preferLatestVersion: ${{ inputs.preferLatestVersion }}
+
+    - name: Determine Version
+      id: gitversion
+      uses: gittools/actions/gitversion/execute@v4.5.0
+
+outputs:
+  major:
+    description: 'Major Version'
+    value: ${{ steps.gitversion.outputs.Major }}
+  minor:
+    description: 'Minor Version'
+    value: ${{ steps.gitversion.outputs.Minor }}
+  patch:
+    description: 'Patch Version'
+    value: ${{ steps.gitversion.outputs.Patch }}
+  majorMinor:
+    description: 'Major.Minor Version'
+    value: ${{ steps.gitversion.outputs.Major }}.${{ steps.gitversion.outputs.Minor }}
+  majorMinorPatch:
+    description: 'Major.Minor.Patch Version'
+    value: ${{ steps.gitversion.outputs.MajorMinorPatch }}
+  semVer:
+    description: 'SemVer Version'
+    value: ${{ steps.gitversion.outputs.SemVer }}
+  fullSemVer:
+    description: 'Full SemVer Version'
+    value: ${{ steps.gitversion.outputs.FullSemVer }}
+  branchName:
+    description: 'Branch Name'
+    value: ${{ steps.gitversion.outputs.BranchName }}
+  sha:
+    description: 'Sha Commit id'
+    value: ${{ steps.gitversion.outputs.Sha }}
+  shortSha:
+    description: 'Short Sha Commit Id'
+    value: ${{ steps.gitversion.outputs.ShortSha }}
+  commitDate:
+    description: 'Commit Date'
+    value: ${{ steps.gitversion.outputs.CommitDate }}
+  nuGetVersion:
+    description: 'NuGet Version'
+    value: ${{ steps.gitversion.outputs.NuGetVersion }}
+  nuGetVersionV2:
+    description: 'NuGet Version V2'
+    value: ${{ steps.gitversion.outputs.NuGetVersionV2}}
+  preReleaseTag:
+    description: 'Pre-Release Tag'
+    value: ${{ steps.gitversion.outputs.PreReleaseTag }}
+  preReleaseTagWithDash:
+    description: 'Pre-Release Tag With Dash'
+    value: ${{ steps.gitversion.outputs.PreReleaseTagWithDash }}
+  buildMetaData:
+    description: 'Build Metadata'
+    value: ${{ steps.gitversion.outputs.BuildMetaData }}
+  versionSourceSha:
+    description: 'Version Source Sha'
+    value: ${{ steps.gitversion.outputs.VersionSourceSha }}
+  commitsSinceVersionSource:
+    description: 'Commits Since Version Source'
+    value: ${{ steps.gitversion.outputs.CommitsSinceVersionSource }}

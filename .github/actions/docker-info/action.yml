@@ -1,0 +1,71 @@
+name: Docker Build Composite Action
+description: This Composite Action streamlines the creation of Docker Build.
+
+inputs:
+  platform:
+    required: false
+    description: The Platform (e.g. linux/amd64 linux/arm64)
+  repository:
+    required: true
+    description: Repository Name
+  sha:
+    required: true
+    description: Commit SHA
+  shortSha:
+    required: true
+    description: Commit Short SHA
+  semver:
+    required: true
+    description: Semantic Version (e.g. 1.2.3 or e.g. 1.2.3-rc1 or e.g. 1.2.3-rc1+build123 or e.g. 1.2.3-rc1+build123-1)
+
+outputs:
+  architecture:
+    description: 'Docker Architecture'
+    value: ${{ steps.architecture.outputs.arch }}
+  name:
+    description: 'Docker Image Name'
+    value: ${{ steps.name.outputs.name }}
+  suffix:
+    description: 'Docker Suffix'
+    value: ${{ steps.architecture.outputs.suffix }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set Docker Architecture
+      id: architecture
+      shell: bash -l {0}
+      run: |
+        #!/usr/bin/env bash
+
+        set -euo pipefail
+
+        PLATFORM="${{ inputs.platform }}"
+
+        if [[ ! -z "${PLATFORM}" ]]; then
+          ARCH="${PLATFORM#linux/}-"
+          SUFFIX=""
+        else
+          ARCH=""
+          SUFFIX="-${{ inputs.semver }}"
+        fi
+
+        echo "ARCH=${ARCH}" >> "$GITHUB_ENV"
+        echo "arch=${ARCH}" >> "$GITHUB_OUTPUT"
+
+        echo "SUFFIX=${SUFFIX}" >> "$GITHUB_ENV"
+        echo "suffix=${SUFFIX}" >> "$GITHUB_OUTPUT"
+
+    - name: Set Docker Name
+      id: name
+      shell: bash -l {0}
+      run: |
+        #!/usr/bin/env bash
+
+        set -euo pipefail
+
+        if [[ -z "${{ steps.architecture.outputs.arch }}" ]]; then
+          echo "name=${{ inputs.repository }}-${{ inputs.semver }}-${{ inputs.shortSha }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "name=${{ inputs.repository }}-${{ steps.architecture.outputs.arch }}${{ inputs.semver }}-${{ inputs.shortSha }}" >> "$GITHUB_OUTPUT"
+        fi

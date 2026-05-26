@@ -1,0 +1,63 @@
+name: 'GitHub Auth and Checkout'
+description: 'Setup GitHub bot, generate app token, and checkout repository'
+author: 'elioseverojunior@gmail.com'
+
+inputs:
+  client-id:
+    description: 'GitHub App Client ID'
+    required: true
+  private-key:
+    description: 'GitHub App Private Key'
+    required: true
+  owner:
+    description: 'Repository owner'
+    required: true
+  repositories:
+    description: 'Repositories to grant access (comma-separated)'
+    required: true
+  fetch-depth:
+    description: 'Git fetch depth (0 for full history)'
+    required: false
+    default: '0'
+  fetch-tags:
+    description: 'Fetch git tags'
+    required: false
+    default: 'true'
+  ref:
+    description: 'Git ref to checkout (defaults to github.ref — the ref that triggered the workflow)'
+    required: false
+
+outputs:
+  token:
+    description: 'GitHub App Token'
+    value: ${{ steps.app-token.outputs.token }}
+  bot-name:
+    description: 'GitHub Bot Name'
+    value: ${{ steps.elioetibr-bot.outputs.name }}
+  bot-email:
+    description: 'GitHub Bot Email'
+    value: ${{ steps.elioetibr-bot.outputs.email }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up GitHub Bot Configuration
+      id: elioetibr-bot
+      uses: elioetibr/composite-actions/github-bot-config@main
+
+    - name: Generate GitHub App Token
+      id: app-token
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repositories }}
+
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+        fetch-depth: ${{ inputs.fetch-depth }}
+        fetch-tags: ${{ inputs.fetch-tags }}
+        token: ${{ steps.app-token.outputs.token }}
