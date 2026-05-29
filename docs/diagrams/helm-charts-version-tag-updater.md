@@ -278,7 +278,7 @@ flowchart LR
 
 ## Valid Services
 
-```
+```text
 auth-service, auth0-oidc-demo, cassandra, comment-import,
 common-external-services, console, console-moderation,
 console-opensearch, data-burrito, email, flume, gdpr-mediation,

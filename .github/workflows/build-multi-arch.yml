@@ -49,7 +49,7 @@ on:
         required: false
         type: string
         description: 'ECR Registry (defaults to aws-account-id.dkr.ecr.aws-region.amazonaws.com)'
-        default: ${{ vars. }}
+        default: ''
 
       ecr-repository:
         required: false
@@ -228,9 +228,12 @@ env:
   AWS_REGION: ${{ inputs.aws-region }}
   BUILD_ARTIFACTS_NAME: 'build-artifacts'
   BUILD_ARTIFACTS_PATH: 'build'
-  ECR_REGISTRY: "${{ inputs.ecr-registry == '' && format('{0}.dkr.ecr.{1}.amazonaws.com', inputs.aws-account-id, inputs.aws-region) || inputs.ecr-registry }}"
+  ECR_REGISTRY: "${{ inputs.aws-ecr-registry == '' && format('{0}.dkr.ecr.{1}.amazonaws.com', inputs.aws-account-id, inputs.aws-region) || inputs.aws-ecr-registry }}"
   ECR_REPOSITORY: "${{ inputs.ecr-repository || github.event.repository.name }}"
-  ECR_REPOSITORY_URI: "${{ inputs.ecr-registry == '' && format('{0}.dkr.ecr.{1}.amazonaws.com', inputs.aws-account-id, inputs.aws-region) || inputs.ecr-registry }}/${{ inputs.ecr-repository || github.event.repository.name }}"
+  ECR_REPOSITORY_URI: >-
+    ${{ inputs.aws-ecr-registry == '' &&
+    format('{0}.dkr.ecr.{1}.amazonaws.com', inputs.aws-account-id, inputs.aws-region)
+    || inputs.aws-ecr-registry }}/${{ inputs.ecr-repository || github.event.repository.name }}
   RULESET_PATH: ${{ inputs.ruleset-path }}
   TEST_RESULT_NAME: 'test-reports'
   TEST_RESULT_PATH: 'build/reports'
@@ -277,7 +280,7 @@ jobs:
           aws-account-id: ${{ inputs.aws-account-id }}
           aws-region: ${{ inputs.aws-region }}
           aws-role-name: ${{ inputs.aws-role-name }}
-          additional-registries: ${{ inputs.additional-registries }}
+          additional-registries: ${{ inputs.aws-additional-ecr-registries }}
 
       - name: Create ECR Private Repository if Not Exists
         id: ecr-repository-check
@@ -370,7 +373,7 @@ jobs:
           aws-account-id: ${{ inputs.aws-account-id }}
           aws-region: ${{ inputs.aws-region }}
           aws-role-name: ${{ inputs.aws-role-name }}
-          additional-registries: ${{ inputs.additional-registries }}
+          additional-registries: ${{ inputs.aws-additional-ecr-registries }}
 
       - name: Get Sonar secrets by name
         if: ${{ inputs.uses-sonar }}
@@ -482,7 +485,7 @@ jobs:
           aws-account-id: ${{ inputs.aws-account-id }}
           aws-region: ${{ inputs.aws-region }}
           aws-role-name: ${{ inputs.aws-role-name }}
-          additional-registries: ${{ inputs.additional-registries }}
+          additional-registries: ${{ inputs.aws-additional-ecr-registries }}
 
       - name: Download Build Libs
         id: download-build-libs
@@ -507,8 +510,10 @@ jobs:
           tags: |
             ${{ steps.tags.outputs.tags }}
             type=raw,enable=${{ github.event_name == 'pull_request' }},priority=200,prefix=,suffix=,value=${{ matrix.platformShort }}-${{ needs.version.outputs.prSemVer }}
-          flavor: |
-            latest=${{ (github.ref_name == github.event.repository.default_branch || needs.checks.outputs.needs-latest == 'true') && steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
+          flavor: >-
+            latest=${{ (github.ref_name == github.event.repository.default_branch ||
+            needs.checks.outputs.needs-latest == 'true') &&
+            steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
 
       - name: Docker BuildX Setup
         uses: elioetibr/composite-actions/.github/actions/docker-buildx-setup@main
@@ -661,8 +666,10 @@ jobs:
           tags: |
             ${{ steps.tags.outputs.tags }}
             type=raw,enable=${{ github.event_name == 'pull_request' }},priority=200,prefix=,suffix=,value=${{ needs.version.outputs.prSemVer }}
-          flavor: |
-            latest=${{ (github.ref_name == github.event.repository.default_branch || needs.checks.outputs.needs-latest == 'true') && steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
+          flavor: >-
+            latest=${{ (github.ref_name == github.event.repository.default_branch ||
+            needs.checks.outputs.needs-latest == 'true') &&
+            steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
 
       - name: Docker BuildX Setup
         uses: elioetibr/composite-actions/.github/actions/docker-buildx-setup@main

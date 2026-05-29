@@ -108,6 +108,8 @@ on:
     secrets:
       PRIVATE_KEY:
         required: true
+      SLACK_BOT_TOKEN:
+        required: false
 
 jobs:
   prepare:
@@ -241,11 +243,11 @@ jobs:
             "AWS_SECRET_ACCESS_KEY=${{ steps.creds.outputs.aws-secret-access-key }}"
             "AWS_SESSION_TOKEN=${{ steps.creds.outputs.aws-session-token }}"
 
-      - name: Pushing Tag ${{ needs.version.outputs.semVer }} to ${{ github.ref_name }}
+      - name: Pushing Tag ${{ needs.prepare.outputs.semver }} to ${{ github.ref_name }}
         if: ${{ github.ref_name == github.event.repository.default_branch }}
         shell: bash -l {0}
         env:
-          TAG: ${{ needs.version.outputs.semVer }}
+          TAG: ${{ needs.prepare.outputs.semver }}
         run: |
           #!/usr/bin/env bash
 
@@ -284,4 +286,4 @@ jobs:
         uses: elioetibr/composite-actions/.github/actions/slack-notification-ci-failure@main
         with:
           channel-id: ${{ vars.SLACK_VIAFOURA_CHANNELS }}
-          slack-bot-token: ${{ secrets.SLACK_VIAFOURA_TOKEN }}
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}

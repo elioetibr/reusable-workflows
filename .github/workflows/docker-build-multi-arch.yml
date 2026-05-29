@@ -90,7 +90,7 @@ on:
       dockerfile-path:
         default: "./Dockerfile"
         description: Docker Path
-        required: true
+        required: false
         type: string
 
       context:
@@ -166,7 +166,7 @@ on:
     secrets:
       PRIVATE_KEY:
         required: true
-      SLACK_VIAFOURA_TOKEN:
+      SLACK_BOT_TOKEN:
         required: true
       SONAR_TOKEN:
         required: true
@@ -212,5 +212,5 @@ jobs:
       create-latest-tag: ${{ inputs.create-latest-tag }}
     secrets:
       PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_VIAFOURA_TOKEN }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

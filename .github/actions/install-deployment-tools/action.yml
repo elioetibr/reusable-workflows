@@ -19,7 +19,7 @@ inputs:
     description: Sops Version
 
   helm_secrets_version:
-    default:  4.6.2
+    default: 4.6.2
     required: false
     description: Helm Secrets Plugin Version
 

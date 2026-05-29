@@ -247,7 +247,7 @@ flowchart TB
 | Secret | Required | Description |
 | ------ | -------- | ----------- |
 | `PRIVATE_KEY` | Yes | GitHub App private key |
-| `SLACK_VIAFOURA_TOKEN` | No | Slack bot token for notifications |
+| `SLACK_BOT_TOKEN` | No | Slack bot token for notifications |
 | `SONAR_TOKEN` | No | SonarCloud token (passed to Docker build) |
 
 ## Composite Actions Used

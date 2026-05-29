@@ -139,151 +139,151 @@ outputs:
 runs:
   using: composite
   steps:
-  - name: Set up GitHub Bot Configuration
-    id: elioetibr-bot
-    uses: elioetibr/composite-actions/github-bot-config@main
+    - name: Set up GitHub Bot Configuration
+      id: elioetibr-bot
+      uses: elioetibr/composite-actions/github-bot-config@main
 
-  - name: Generate GitHub App Token
-    uses: actions/create-github-app-token@v3
-    id: app-token
-    with:
-      client-id: ${{ inputs.client-id }}
-      private-key: ${{ inputs.private-key }}
-      owner: ${{ inputs.owner }}
-      repositories: ${{ inputs.repositories }}
+    - name: Generate GitHub App Token
+      uses: actions/create-github-app-token@v3
+      id: app-token
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repositories }}
 
-  - name: Checkout
-    uses: actions/checkout@v6
-    with:
-      fetch-depth: 0
-      fetch-tags: true
-      token: ${{ steps.app-token.outputs.token }}
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+        token: ${{ steps.app-token.outputs.token }}
 
-  - name: Docker Tags
-    id: tags
-    uses: viafoura/docker-tag-generator-action@v1
-    with:
-      semVer: ${{ inputs.semver }}
-      platform: ${{ inputs.platform }}
+    - name: Docker Tags
+      id: tags
+      uses: viafoura/docker-tag-generator-action@v1
+      with:
+        semVer: ${{ inputs.semver }}
+        platform: ${{ inputs.platform }}
 
-  - name: Docker Meta
-    id: meta
-    uses: docker/metadata-action@v6
-    with:
-      images: ${{ inputs.ecrRegistry }}/${{ inputs.ecrRepository }}
-      tags: |
-        ${{ steps.tags.outputs.tags }}
-      flavor: |
-        latest=${{ github.ref_name == github.event.repository.default_branch && inputs.create-latest-tag == 'true' }}
+    - name: Docker Meta
+      id: meta
+      uses: docker/metadata-action@v6
+      with:
+        images: ${{ inputs.ecrRegistry }}/${{ inputs.ecrRepository }}
+        tags: |
+          ${{ steps.tags.outputs.tags }}
+        flavor: |
+          latest=${{ github.ref_name == github.event.repository.default_branch && inputs.create-latest-tag == 'true' }}
 
-  - name: Set up Docker BuildX
-    uses: docker/setup-buildx-action@v3
+    - name: Set up Docker BuildX
+      uses: docker/setup-buildx-action@v3
 
-  - name: AWS STS Assume Role 218894879100
-    id: creds-testdev
-    uses: aws-actions/configure-aws-credentials@v6
-    with:
-      role-to-assume: arn:aws:iam::218894879100:role/github-actions-role
-      aws-region: ${{ inputs.region }}
-      mask-aws-account-id: 'false'
-      role-duration-seconds: 900
-      role-session-name: ViafouraGitHubActionsTestDev
+    - name: AWS STS Assume Role 218894879100
+      id: creds-testdev
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::218894879100:role/github-actions-role
+        aws-region: ${{ inputs.region }}
+        mask-aws-account-id: 'false'
+        role-duration-seconds: 900
+        role-session-name: ViafouraGitHubActionsTestDev
 
-  - name: Login to Amazon ECR 218894879100
-    id: login-ecr-testdev
-    uses: aws-actions/amazon-ecr-login@v2
-    with:
-      mask-password: 'true'
+    - name: Login to Amazon ECR 218894879100
+      id: login-ecr-testdev
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        mask-password: 'true'
 
-  - name: AWS STS Assume Role 557206274117
-    id: creds-cicd
-    uses: aws-actions/configure-aws-credentials@v6
-    with:
-      role-to-assume: arn:aws:iam::557206274117:role/github-actions-role
-      aws-region: ${{ inputs.region }}
-      mask-aws-account-id: 'false'
-      role-duration-seconds: 900
-      role-session-name: ViafouraGitHubActionsCICD
+    - name: AWS STS Assume Role 557206274117
+      id: creds-cicd
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::557206274117:role/github-actions-role
+        aws-region: ${{ inputs.region }}
+        mask-aws-account-id: 'false'
+        role-duration-seconds: 900
+        role-session-name: ViafouraGitHubActionsCICD
 
-  - name: Login to Amazon ECR 557206274117
-    id: login-ecr-cicd
-    uses: aws-actions/amazon-ecr-login@v2
-    with:
-      mask-password: 'true'
+    - name: Login to Amazon ECR 557206274117
+      id: login-ecr-cicd
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        mask-password: 'true'
 
-  - name: AWS STS Assume Role
-    id: creds
-    uses: aws-actions/configure-aws-credentials@v6
-    with:
-      role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/${{ inputs.role-name }}
-      aws-region: ${{ inputs.region }}
-      mask-aws-account-id: 'false'
-      role-duration-seconds: 900
-      role-session-name: ViafouraGitHubActions
-      output-credentials: true
+    - name: AWS STS Assume Role
+      id: creds
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/${{ inputs.role-name }}
+        aws-region: ${{ inputs.region }}
+        mask-aws-account-id: 'false'
+        role-duration-seconds: 900
+        role-session-name: ViafouraGitHubActions
+        output-credentials: true
 
-  - name: Login to Amazon ECR
-    id: login-ecr
-    uses: aws-actions/amazon-ecr-login@v2
-    with:
-      mask-password: 'true'
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        mask-password: 'true'
 
-  - name: Create ECR Private Repository if Not Exists
-    uses: elioetibr/composite-actions/ecr-repository-check@main
-    id: ecr-repository-check
-    with:
-      repository: ${{ inputs.ecrRepository }}
-      region: ${{ inputs.region }}
+    - name: Create ECR Private Repository if Not Exists
+      uses: elioetibr/composite-actions/ecr-repository-check@main
+      id: ecr-repository-check
+      with:
+        repository: ${{ inputs.ecrRepository }}
+        region: ${{ inputs.region }}
 
-  - name: Docker Build
-    id: docker_build
-    uses: docker/build-push-action@v7
-    with:
-      context: ${{ inputs.context }}
-      file: ${{ inputs.dockerfilePath }}
-      build-args: |
-        BRANCH_NAME=${{ github.ref_name }}
-        BUILD_TIME=${{ github.event.created_at }}
-        COMMITSHA=${{ inputs.sha }}
-        COMMITSHASHORT=${{ inputs.shortSha }}
-        GITHUB_REPOSITORY=${{ github.repository }}
-        IMAGE=${{ inputs.image }}
-        PR_BASE=${{ github.event.pull_request.base.ref || '' }}
-        PR_BRANCH=${{ github.event.pull_request.head.ref || '' }}
-        PR_KEY=${{ github.event.pull_request.number || '' }}
-        TAG=${{ inputs.tag }}
-        TARGETARCH=${{ inputs.targetArch }}
-        TARGETPLATFORM=${{ inputs.platform }}
-        PROJECT_VERSION=${{ inputs.semver }}
-        VERSION=${{ inputs.semver }}
-      secrets: |
-        "AWS_ACCESS_KEY_ID=${{ steps.creds.outputs.aws-access-key-id }}"
-        "AWS_SECRET_ACCESS_KEY=${{ steps.creds.outputs.aws-secret-access-key }}"
-        "AWS_SESSION_TOKEN=${{ steps.creds.outputs.aws-session-token }}"
-        "GITHUB_TOKEN=${{ steps.app-token.outputs.token }}"
-        "SONAR_TOKEN=${{ inputs.sonarToken }}"
-      labels: ${{ steps.meta.outputs.labels }}
-      platforms: ${{ inputs.platform }}
-      provenance: ${{ inputs.provenance }}
-      push: ${{ inputs.push }}
-      tags: ${{ steps.meta.outputs.tags }}
+    - name: Docker Build
+      id: docker_build
+      uses: docker/build-push-action@v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfilePath }}
+        build-args: |
+          BRANCH_NAME=${{ github.ref_name }}
+          BUILD_TIME=${{ github.event.created_at }}
+          COMMITSHA=${{ inputs.sha }}
+          COMMITSHASHORT=${{ inputs.shortSha }}
+          GITHUB_REPOSITORY=${{ github.repository }}
+          IMAGE=${{ inputs.image }}
+          PR_BASE=${{ github.event.pull_request.base.ref || '' }}
+          PR_BRANCH=${{ github.event.pull_request.head.ref || '' }}
+          PR_KEY=${{ github.event.pull_request.number || '' }}
+          TAG=${{ inputs.tag }}
+          TARGETARCH=${{ inputs.targetArch }}
+          TARGETPLATFORM=${{ inputs.platform }}
+          PROJECT_VERSION=${{ inputs.semver }}
+          VERSION=${{ inputs.semver }}
+        secrets: |
+          "AWS_ACCESS_KEY_ID=${{ steps.creds.outputs.aws-access-key-id }}"
+          "AWS_SECRET_ACCESS_KEY=${{ steps.creds.outputs.aws-secret-access-key }}"
+          "AWS_SESSION_TOKEN=${{ steps.creds.outputs.aws-session-token }}"
+          "GITHUB_TOKEN=${{ steps.app-token.outputs.token }}"
+          "SONAR_TOKEN=${{ inputs.sonarToken }}"
+        labels: ${{ steps.meta.outputs.labels }}
+        platforms: ${{ inputs.platform }}
+        provenance: ${{ inputs.provenance }}
+        push: ${{ inputs.push }}
+        tags: ${{ steps.meta.outputs.tags }}
 
-  - name: Checking Outputs
-    shell: bash -l {0}
-    run: |
-      echo 'architecture: ${{ steps.tags.outputs.architecture }}'
-      echo 'buildDatetime: ${{ steps.tags.outputs.buildDatetime }}'
-      echo 'platform: ${{ steps.tags.outputs.platform }}'
-      echo 'refName: ${{ steps.tags.outputs.refName }}'
-      echo 'runAttempt: ${{ steps.tags.outputs.runAttempt }}'
-      echo 'semVer: ${{ steps.tags.outputs.semVer }}'
-      echo 'sha: ${{ steps.tags.outputs.sha }}'
-      echo 'shaShort: ${{ steps.tags.outputs.shaShort }}'
-      echo 'suffix: ${{ steps.tags.outputs.suffix }}'
-      echo 'tags: ${{ steps.tags.outputs.tags }}'
-      echo 'tagsJson: ${{ steps.tags.outputs.tagsJson }}'
-      echo 'metaVersion: ${{ steps.meta.outputs.version }}'
-      echo 'metaTags: ${{ steps.meta.outputs.tags }}'
-      echo 'metaLabels: ${{ steps.meta.outputs.labels }}'
-      echo 'metaAnnotations: ${{ steps.meta.outputs.annotations }}'
-      echo 'metaJson: ${{ steps.meta.outputs.json }}'
+    - name: Checking Outputs
+      shell: bash -l {0}
+      run: |
+        echo 'architecture: ${{ steps.tags.outputs.architecture }}'
+        echo 'buildDatetime: ${{ steps.tags.outputs.buildDatetime }}'
+        echo 'platform: ${{ steps.tags.outputs.platform }}'
+        echo 'refName: ${{ steps.tags.outputs.refName }}'
+        echo 'runAttempt: ${{ steps.tags.outputs.runAttempt }}'
+        echo 'semVer: ${{ steps.tags.outputs.semVer }}'
+        echo 'sha: ${{ steps.tags.outputs.sha }}'
+        echo 'shaShort: ${{ steps.tags.outputs.shaShort }}'
+        echo 'suffix: ${{ steps.tags.outputs.suffix }}'
+        echo 'tags: ${{ steps.tags.outputs.tags }}'
+        echo 'tagsJson: ${{ steps.tags.outputs.tagsJson }}'
+        echo 'metaVersion: ${{ steps.meta.outputs.version }}'
+        echo 'metaTags: ${{ steps.meta.outputs.tags }}'
+        echo 'metaLabels: ${{ steps.meta.outputs.labels }}'
+        echo 'metaAnnotations: ${{ steps.meta.outputs.annotations }}'
+        echo 'metaJson: ${{ steps.meta.outputs.json }}'

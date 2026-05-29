@@ -413,7 +413,7 @@ flowchart TB
 
 ## File Structure
 
-```
+```text
 .github/
 └── workflows/
     ├── build-multi-arch.yml         # Unified core workflow
