@@ -1,5 +1,11 @@
 extends: default
 
+# SOPS-encrypted/decrypted files carry machine-generated formatting that
+# isn't meant to satisfy human YAML style rules. Decrypted (*.dec.*) files
+# are also gitignored; encrypted (*.enc.*) ones are committed verbatim.
+ignore: |
+  secrets/*.sops.*
+
 rules:
   # Align with .editorconfig: 2-space indentation
   indentation:

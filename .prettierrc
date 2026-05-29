@@ -1,6 +1,32 @@
 {
-  "singleQuote": false,
-  "printWidth": 80,
+  "printWidth": 100,
+  "proseWrap": "preserve",
   "tabWidth": 2,
-  "trailingComma": "all"
+  "useTabs": false,
+  "semi": true,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "bracketSpacing": true,
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": ["*.yml", "*.yaml"],
+      "options": {
+        "singleQuote": false,
+        "tabWidth": 2
+      }
+    },
+    {
+      "files": ["*.md"],
+      "options": {
+        "embeddedLanguageFormatting": "off"
+      }
+    },
+    {
+      "files": ["Makefile", "makefile", "*.mk"],
+      "options": {
+        "useTabs": true
+      }
+    }
+  ]
 }
