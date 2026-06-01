@@ -264,7 +264,7 @@ on:
 
 jobs:
   build:
-    uses: elioetibr/reusable-workflows/.github/workflows/build-multi-arch.yml@main
+    uses: elioetibr/reusable-workflows/.github/workflows/build-multi-arch.yml@v0.0.1-1
     with:
       build-type: docker
       registry-provider: ${{ inputs.registry-provider }}
