@@ -1,0 +1,712 @@
+name: Multi-Arch Build Pipeline
+
+# Unified workflow for multi-architecture Docker builds
+# Supports both pure Docker builds and Java/Gradle builds
+#
+# Cloud-agnostic: the container registry backend is selected via the
+# `registry-provider` input (aws | gcp | azure | ghcr | dockerhub | generic).
+# All cloud-specific authentication and repository provisioning is delegated to
+# the registry-setup / registry-repository-ensure composite actions, so this
+# workflow itself contains no provider-specific logic.
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+  checks: write
+  packages: write
+
+on:
+  workflow_call:
+    inputs:
+      # Build Type Selection
+      build-type:
+        description: 'Build type: docker or java'
+        required: true
+        type: string
+
+      # =======================================================================
+      # Registry Provider Selection
+      # =======================================================================
+      registry-provider:
+        description: 'Registry provider: aws | gcp | azure | ghcr | dockerhub | generic'
+        required: false
+        type: string
+        default: ${{ vars.REGISTRY_PROVIDER || 'ghcr' }}
+
+      registry:
+        description: >-
+          Explicit registry host/prefix override. Required for the `generic`
+          provider; optional otherwise (computed from provider inputs).
+        required: false
+        type: string
+        default: ''
+
+      image-repository:
+        required: false
+        type: string
+        default: ${{ vars.IMAGE_REPOSITORY || github.event.repository.name }}
+        description: 'Repository/image name (registry-agnostic)'
+
+      registry-username:
+        description: 'Registry username (ghcr/dockerhub/generic). Defaults to github.actor for ghcr.'
+        required: false
+        type: string
+        default: ''
+
+      # AWS Configuration (registry-provider: aws)
+      aws-account-id:
+        default: ${{ vars.AWS_CICD_ACCOUNT_ID || '' }}
+        description: 'AWS Account ID'
+        required: false
+        type: string
+
+      aws-additional-ecr-registries:
+        description: 'Comma-separated list of ECR registries to login to. default (218894879100 - testdev).'
+        required: false
+        type: string
+        default: ${{ vars.AWS_ADDITIONAL_ECR_REGISTRIES || '' }}
+
+      aws-region:
+        default: ${{ vars.AWS_REGION }}
+        description: 'AWS Region'
+        required: false
+        type: string
+
+      aws-role-name:
+        default: ${{ vars.AWS_CICD_CROSS_ACCOUNT_ROLE }}
+        description: 'AWS GitHub OIDC Role Name'
+        required: false
+        type: string
+
+      # GCP Configuration (registry-provider: gcp)
+      gcp-location:
+        description: 'Artifact Registry location, e.g. "us" or "us-central1"'
+        required: false
+        type: string
+        default: ${{ vars.GCP_LOCATION || '' }}
+
+      gcp-project-id:
+        description: 'GCP project ID'
+        required: false
+        type: string
+        default: ${{ vars.GCP_PROJECT_ID || '' }}
+
+      gcp-workload-identity-provider:
+        description: 'Full Workload Identity Federation provider resource name'
+        required: false
+        type: string
+        default: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || '' }}
+
+      gcp-service-account:
+        description: 'GCP service account email to impersonate'
+        required: false
+        type: string
+        default: ${{ vars.GCP_SERVICE_ACCOUNT || '' }}
+
+      # Azure Configuration (registry-provider: azure)
+      azure-client-id:
+        description: 'Azure AD application (client) ID for OIDC'
+        required: false
+        type: string
+        default: ${{ vars.AZURE_CLIENT_ID || '' }}
+
+      azure-tenant-id:
+        description: 'Azure AD tenant ID'
+        required: false
+        type: string
+        default: ${{ vars.AZURE_TENANT_ID || '' }}
+
+      azure-subscription-id:
+        description: 'Azure subscription ID'
+        required: false
+        type: string
+        default: ${{ vars.AZURE_SUBSCRIPTION_ID || '' }}
+
+      acr-name:
+        description: 'Azure Container Registry name (without .azurecr.io)'
+        required: false
+        type: string
+        default: ${{ vars.ACR_NAME || '' }}
+
+      # Docker Hub Configuration (registry-provider: dockerhub)
+      dockerhub-namespace:
+        description: 'Docker Hub user/org namespace used as the registry prefix'
+        required: false
+        type: string
+        default: ${{ vars.DOCKERHUB_NAMESPACE || '' }}
+
+      # Docker Configuration
+      dockerfile-path:
+        default: './Dockerfile'
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+
+      context:
+        default: '.'
+        description: 'Docker build context directory'
+        required: false
+        type: string
+
+      provenance:
+        default: ${{ vars.DOCKER_BUILD_PROVENANCE }}
+        description: 'Enable SLSA provenance'
+        required: false
+        type: string
+
+      push:
+        default: ${{ vars.DOCKER_BUILD_PUSH }}
+        description: 'Push image after build'
+        required: false
+        type: string
+
+      fail-fast:
+        default: true
+        description: 'Fail workflow fast if a job fails'
+        required: false
+        type: boolean
+
+      create-latest-tag:
+        default: ${{ vars.DOCKER_TAG_LATEST || 'false' }}
+        description: 'Create and push the latest tag alongside the version tag'
+        required: false
+        type: string
+
+      # GitHub Configuration
+      client-id:
+        default: ${{ vars.CLIENT_ID }}
+        description: 'GitHub App Client ID'
+        required: false
+        type: string
+
+      owner:
+        default: ${{ github.repository_owner }}
+        description: 'GitHub Organization Owner'
+        required: false
+        type: string
+
+      repository:
+        default: ${{ github.event.repository.name }}
+        description: 'GitHub Repository Name'
+        required: false
+        type: string
+
+      # Runner Configuration
+      runsOnDefault:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+        description: 'Default runner for non-arch-specific jobs'
+
+      runsOnAmd64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_AMD64 }}
+        description: 'Runner for AMD64 architecture builds'
+
+      runsOnArm64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_ARM64 }}
+        description: 'Runner for ARM64 architecture builds'
+
+      # GitVersion Configuration
+      versionSpec:
+        default: ${{ vars.GITVERSION_SPEC || '6.x' }}
+        description: 'GitVersion Version Specification'
+        required: false
+        type: string
+
+      # Slack Configuration
+      slack-send-notification:
+        default: ${{ vars.SLACK_SEND_NOTIFICATIONS }}
+        description: 'Send Slack Notification on failure'
+        required: false
+        type: string
+
+      slack-channels:
+        default: ${{ vars.SLACK_BOT_CI_CHANNELS }}
+        description: 'Slack channels for notifications'
+        required: false
+        type: string
+
+    secrets:
+      PRIVATE_KEY:
+        required: true
+      SONAR_TOKEN:
+        required: true
+      SLACK_BOT_TOKEN:
+        required: true
+      REGISTRY_PASSWORD:
+        description: 'Registry password/token for ghcr/dockerhub/generic providers (unused for OIDC backends)'
+        required: false
+
+    outputs:
+      version:
+        description: 'The version calculated by GitVersion'
+        value: ${{ jobs.version.outputs.version }}
+      semVer:
+        description: 'The semantic version'
+        value: ${{ jobs.version.outputs.semVer }}
+      shortSha:
+        description: 'Short SHA of the commit'
+        value: ${{ jobs.version.outputs.shortSha }}
+      sha:
+        description: 'Full SHA of the commit'
+        value: ${{ jobs.version.outputs.sha }}
+      prSemVer:
+        description: 'PR-scoped semantic version (empty on non-pull_request events)'
+        value: ${{ jobs.version.outputs.prSemVer }}
+
+env:
+  AWS_REGION: ${{ inputs.aws-region }}
+  BUILD_ARTIFACTS_NAME: 'build-artifacts'
+  BUILD_ARTIFACTS_PATH: 'build'
+  IMAGE_REPOSITORY: "${{ inputs.image-repository || github.event.repository.name }}"
+  TEST_RESULT_NAME: 'test-reports'
+  TEST_RESULT_PATH: 'build/reports'
+
+concurrency:
+  group: ${{ github.event.repository.name }}-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+
+jobs:
+  # =============================================================================
+  # SANITIZATION JOB
+  # =============================================================================
+  sanitization:
+    name: Sanitization
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: ${{ always() }}
+    outputs:
+      image_repository: ${{ steps.sanitize.outputs.image_repository }}
+      ref_name: ${{ steps.sanitize.outputs.ref_name }}
+    steps:
+      - name: Sanitize branch name for cache keys
+        id: sanitize
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          IMAGE_REPOSITORY: ${{ inputs.image-repository }}
+        run: |
+          # Bash pattern replacement (no sed subshell): replace every char
+          # outside the allowed set with '-'. Note bash globs use [!...] not [^...].
+          SANITIZED_REF="${REF_NAME//[!a-zA-Z0-9._-]/-}"
+          SANITIZED_IMAGE_REPOSITORY="${IMAGE_REPOSITORY//[!a-zA-Z0-9._-]/-}"
+          echo "ref_name=${SANITIZED_REF}" >> "$GITHUB_OUTPUT"
+          echo "image_repository=${SANITIZED_IMAGE_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+  # =============================================================================
+  # REGISTRY REPOSITORY CHECKS JOB
+  # =============================================================================
+  checks:
+    name: Registry Repository Checks
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: ${{ success() && !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]')) }}
+    outputs:
+      needs-latest: ${{ steps.repository-check.outputs.needs-latest }}
+      registry-status: ${{ steps.repository-check.outputs.status }}
+    steps:
+      - name: Registry Setup
+        if: ${{ inputs.registry-provider == 'aws' }}
+        uses: elioetibr/composite-actions/registry-setup@v0
+        with:
+          provider: ${{ inputs.registry-provider }}
+          registry: ${{ inputs.registry }}
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+          aws-additional-ecr-registries: ${{ inputs.aws-additional-ecr-registries }}
+
+      - name: Ensure Repository Exists
+        id: repository-check
+        uses: elioetibr/composite-actions/registry-repository-ensure@v0
+        with:
+          provider: ${{ inputs.registry-provider }}
+          repository: ${{ inputs.image-repository }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-account-id: ${{ inputs.aws-account-id }}
+          is-default-branch: ${{ github.ref_name == github.event.repository.default_branch }}
+
+  # =============================================================================
+  # VERSION CALCULATION JOB
+  # =============================================================================
+  version:
+    name: Calculate Version
+    runs-on: ${{ inputs.runsOnDefault }}
+    if: ${{ !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]')) }}
+    outputs:
+      version: ${{ steps.gitversion.outputs.majorMinorPatch }}
+      semVer: ${{ steps.gitversion.outputs.semVer }}
+      shortSha: ${{ steps.gitversion.outputs.shortSha }}
+      sha: ${{ steps.gitversion.outputs.sha }}
+      prSemVer: ${{ steps.export_pr_version.outputs.prSemVer || '' }}
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/github-auth-checkout@v0
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Calculate Version
+        id: gitversion
+        uses: elioetibr/composite-actions/gitversion-calculate@v0
+        with:
+          version-spec: ${{ inputs.versionSpec }}
+
+      - name: Export PR Version
+        id: export_pr_version
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          # HEAD is the PR branch tip: the checkout step pins ref to
+          # github.event.pull_request.head.sha on pull_request events, so
+          # git rev-parse resolves the developer's branch HEAD (not the
+          # ephemeral refs/pull/N/merge commit). Adaptive abbreviation keeps
+          # the length consistent with legacy java-pull-request.yml.
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          PRSEMVER="${{ format('PR-{0}-{1}', github.event.pull_request.number, github.run_attempt) }}-${SHORT_SHA}"
+          echo "PRSEMVER=${PRSEMVER}" >> "$GITHUB_ENV"
+          echo "prSemVer=${PRSEMVER}" >> "$GITHUB_OUTPUT"
+
+      - name: Display Semantic Version Information
+        run: |
+          echo "version: ${{ steps.gitversion.outputs.majorMinorPatch }}"
+          echo "semVer: ${{ steps.gitversion.outputs.semVer }}"
+          echo "shortSha: ${{ steps.gitversion.outputs.shortSha }}"
+          echo "sha: ${{ steps.gitversion.outputs.sha }}"
+          echo "prSemVer: ${{ steps.export_pr_version.outputs.prSemVer || '' }}"
+
+  # =============================================================================
+  # DOCKER BUILD JOB (Multi-arch matrix)
+  # =============================================================================
+  docker-build:
+    name: Docker Build Image
+    needs: [sanitization, checks, version]
+    if: |
+      always() &&
+      needs.sanitization.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.version.result == 'success' &&
+      (inputs.build-type == 'docker') &&
+      !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]'))
+    concurrency:
+      group: ${{ github.event_name }}-${{ matrix.platformShort }}-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+      cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+    strategy:
+      fail-fast: ${{ inputs.fail-fast }}
+      matrix:
+        include:
+          - platform: linux/amd64
+            platformShort: amd64
+            metaTags: amd64Tags
+            runner: ${{ inputs.runsOnAmd64 }}
+          - platform: linux/arm64
+            platformShort: arm64
+            metaTags: arm64Tags
+            runner: ${{ inputs.runsOnArm64 }}
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      architecture: ${{ steps.tags.outputs.architecture }}
+      semVer: ${{ steps.tags.outputs.semVer }}
+      tags: ${{ steps.tags.outputs.tags }}
+      metaTags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/github-auth-checkout@v0
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Registry Setup
+        id: registry
+        uses: elioetibr/composite-actions/registry-setup@v0
+        with:
+          provider: ${{ inputs.registry-provider }}
+          registry: ${{ inputs.registry }}
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+          aws-additional-ecr-registries: ${{ inputs.aws-additional-ecr-registries }}
+          gcp-location: ${{ inputs.gcp-location }}
+          gcp-project-id: ${{ inputs.gcp-project-id }}
+          gcp-workload-identity-provider: ${{ inputs.gcp-workload-identity-provider }}
+          gcp-service-account: ${{ inputs.gcp-service-account }}
+          azure-client-id: ${{ inputs.azure-client-id }}
+          azure-tenant-id: ${{ inputs.azure-tenant-id }}
+          azure-subscription-id: ${{ inputs.azure-subscription-id }}
+          acr-name: ${{ inputs.acr-name }}
+          dockerhub-namespace: ${{ inputs.dockerhub-namespace }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Download Build Libs
+        id: download-build-libs
+        if: ${{ inputs.build-type == 'java' }}
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.BUILD_ARTIFACTS_NAME }}
+          path: ${{ env.BUILD_ARTIFACTS_PATH }}
+
+      - name: Docker Tags
+        id: tags
+        uses: elioetibr/docker-tag-generator-action@v1
+        with:
+          platform: ${{ matrix.platform }}
+          semVer: ${{ needs.version.outputs.semVer }}
+
+      - name: Docker Meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.registry.outputs.registry }}/${{ env.IMAGE_REPOSITORY }}
+          tags: |
+            ${{ steps.tags.outputs.tags }}
+            type=raw,enable=${{ github.event_name == 'pull_request' }},priority=200,prefix=,suffix=,value=${{ matrix.platformShort }}-${{ needs.version.outputs.prSemVer }}
+          flavor: >-
+            latest=${{ (github.ref_name == github.event.repository.default_branch ||
+            needs.checks.outputs.needs-latest == 'true') &&
+            steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
+
+      - name: Docker BuildX Setup
+        uses: elioetibr/composite-actions/docker-buildx-setup@v0
+
+      - name: Cache Docker layers
+        uses: actions/cache@v5
+        with:
+          path: /tmp/buildx-cache-${{ runner.arch }}
+          key: buildx-cache-${{ needs.sanitization.outputs.ref_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dockerfile-path, '**/*.gradle') }}
+          restore-keys: |
+            buildx-cache-${{ needs.sanitization.outputs.ref_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dockerfile-path, '**/*.gradle') }}
+            buildx-cache-${{ needs.sanitization.outputs.ref_name }}-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Docker Build and Publish
+        id: docker_build
+        uses: docker/build-push-action@v7
+        env:
+          SEMVER: ${{ needs.version.outputs.semVer }}
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile-path }}
+          build-args: |
+            TARGETPLATFORM=${{ matrix.platform }}
+            TARGETARCH=${{ matrix.platformShort }}
+            GITHUB_REPOSITORY=${{ github.repository }}
+            BRANCH_NAME=${{ github.ref_name }}
+            PR_BRANCH=${{ github.event.pull_request.head.ref || '' }}
+            PR_BASE=${{ github.event.pull_request.base.ref || '' }}
+            PR_KEY=${{ github.event.pull_request.number || '' }}
+            PROJECT_VERSION=${{ env.SEMVER }}
+            VERSION=${{ env.SEMVER }}
+          secrets: |
+            "AWS_ACCESS_KEY_ID=${{ steps.registry.outputs.aws-access-key-id || '' }}"
+            "AWS_SECRET_ACCESS_KEY=${{ steps.registry.outputs.aws-secret-access-key || '' }}"
+            "AWS_SESSION_TOKEN=${{ steps.registry.outputs.aws-session-token || '' }}"
+            "GITHUB_TOKEN=${{ steps.auth.outputs.token || github.token }}"
+            "SONAR_TOKEN=${{ secrets.SONAR_TOKEN || '' }}"
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ matrix.platform }}
+          provenance: ${{ inputs.provenance }}
+          push: ${{ inputs.push }}
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: |
+            type=local,src=/tmp/buildx-cache-${{ runner.arch }},ignore-error=true
+          cache-to: |
+            type=local,dest=/tmp/buildx-cache-${{ runner.arch }},mode=max,ignore-error=true
+          outputs: type=docker,dest=${{ runner.temp }}/${{ needs.sanitization.outputs.image_repository }}-${{ runner.os }}-${{ runner.arch }}.tar
+
+      - name: Upload artifact
+        if: ${{ steps.docker_build.conclusion == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.sanitization.outputs.image_repository }}-${{ runner.os }}-${{ runner.arch }}.tar
+          path: ${{ runner.temp }}/${{ needs.sanitization.outputs.image_repository }}-${{ runner.os }}-${{ runner.arch }}.tar
+
+      - name: Tag Outputs
+        run: |
+          echo "==============================================="
+          meta_tags=$(echo '${{ steps.meta.outputs.json }}' | jq -c --arg key "${{ matrix.metaTags }}" '{($key): .tags}')
+          echo "${meta_tags}"
+          echo "${meta_tags}" > meta-tags-${{ matrix.metaTags }}.json
+          echo "==============================================="
+
+      - name: Upload matrix result
+        uses: actions/upload-artifact@v7
+        with:
+          name: meta-tags-${{ matrix.metaTags }}
+          path: meta-tags-${{ matrix.metaTags }}.json
+
+  # =============================================================================
+  # AGGREGATE TAGS JOB
+  # =============================================================================
+  aggregate-tags:
+    name: Aggregate Tags
+    needs: [sanitization, checks, version, docker-build]
+    if: |
+      always() &&
+      needs.sanitization.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.version.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]'))
+    runs-on: ${{ inputs.runsOnDefault }}
+    outputs:
+      metaTags: ${{ steps.aggregate.outputs.metaTags }}
+    steps:
+      - name: Download all Meta Tags artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: meta-tags-*
+          merge-multiple: true
+
+      - name: Aggregate all Meta Tags with JQ
+        id: aggregate
+        shell: bash -l {0}
+        run: |
+          META_TAGS=$(jq -s -c 'add' meta-tags-*.json)
+          echo "metaTags=$META_TAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Display all Meta Tags Results
+        shell: bash -l {0}
+        run: |
+          echo "Meta Tags Results: $(echo '${{ steps.aggregate.outputs.metaTags }}' | jq -Sr '.')"
+
+  # =============================================================================
+  # MANIFEST JOB
+  # =============================================================================
+  manifest:
+    name: Docker Multi Architecture Manifest Index
+    runs-on: ${{ inputs.runsOnDefault }}
+    needs: [sanitization, checks, version, docker-build, aggregate-tags]
+    if: |
+      always() &&
+      needs.sanitization.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.version.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      needs.aggregate-tags.result == 'success' &&
+      !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]'))
+    steps:
+      - name: GitHub Auth and Checkout
+        id: auth
+        uses: elioetibr/composite-actions/github-auth-checkout@v0
+        with:
+          client-id: ${{ inputs.client-id }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ inputs.owner }}
+          repositories: ${{ inputs.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Registry Setup
+        id: registry
+        uses: elioetibr/composite-actions/registry-setup@v0
+        with:
+          provider: ${{ inputs.registry-provider }}
+          registry: ${{ inputs.registry }}
+          aws-account-id: ${{ inputs.aws-account-id }}
+          aws-region: ${{ inputs.aws-region }}
+          aws-role-name: ${{ inputs.aws-role-name }}
+          aws-additional-ecr-registries: ${{ inputs.aws-additional-ecr-registries }}
+          gcp-location: ${{ inputs.gcp-location }}
+          gcp-project-id: ${{ inputs.gcp-project-id }}
+          gcp-workload-identity-provider: ${{ inputs.gcp-workload-identity-provider }}
+          gcp-service-account: ${{ inputs.gcp-service-account }}
+          azure-client-id: ${{ inputs.azure-client-id }}
+          azure-tenant-id: ${{ inputs.azure-tenant-id }}
+          azure-subscription-id: ${{ inputs.azure-subscription-id }}
+          acr-name: ${{ inputs.acr-name }}
+          dockerhub-namespace: ${{ inputs.dockerhub-namespace }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Docker Tags
+        id: tags
+        uses: elioetibr/docker-tag-generator-action@v1
+        with:
+          semVer: ${{ needs.version.outputs.semVer }}
+
+      - name: Docker Meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.registry.outputs.registry }}/${{ env.IMAGE_REPOSITORY }}
+          tags: |
+            ${{ steps.tags.outputs.tags }}
+            type=raw,enable=${{ github.event_name == 'pull_request' }},priority=200,prefix=,suffix=,value=${{ needs.version.outputs.prSemVer }}
+          flavor: >-
+            latest=${{ (github.ref_name == github.event.repository.default_branch ||
+            needs.checks.outputs.needs-latest == 'true') &&
+            steps.tags.outputs.architecture == '' && inputs.create-latest-tag == 'true' }}
+
+      - name: Docker BuildX Setup
+        uses: elioetibr/composite-actions/docker-buildx-setup@v0
+
+      - name: Generate and Push Multi Architecture Manifest
+        uses: elioetibr/docker-buildx-imagetools-manifest-creator@v0
+        with:
+          registry: ${{ steps.registry.outputs.registry }}
+          repository: ${{ inputs.image-repository }}
+          amd64-tags: ${{ toJSON(fromJSON(needs.aggregate-tags.outputs.metaTags).amd64Tags) }}
+          arm64-tags: ${{ toJSON(fromJSON(needs.aggregate-tags.outputs.metaTags).arm64Tags) }}
+          meta-tags: ${{ toJSON(fromJSON(steps.meta.outputs.json).tags) }}
+          meta-annotations: ${{ toJSON(fromJSON(steps.meta.outputs.json).annotations) }}
+          version: ${{ needs.version.outputs.semVer }}
+
+      - name: Pushing Tag ${{ needs.version.outputs.semVer }} to ${{ github.ref_name }}
+        if: ${{ github.ref_name == github.event.repository.default_branch }}
+        shell: bash -l {0}
+        env:
+          TAG: ${{ needs.version.outputs.semVer }}
+        run: |
+          #!/usr/bin/env bash
+
+          set -euo pipefail
+
+          git --no-pager tag --list | sort -d | tail -n 30
+
+          git fetch --force --prune --prune-tags --tags origin
+
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists on remote, skipping"
+          else
+            echo "Creating and pushing tag ${TAG}"
+            git tag "${TAG}" -a -m "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+      - name: Add PR comment
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.auth.outputs.token }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: ':rocket: Hey, here is a new version built from this PR: **${{ needs.version.outputs.prSemVer }}** '
+            })
+
+  # =============================================================================
+  # NOTIFICATION FAILURES JOB
+  # =============================================================================
+  notification_failures:
+    name: Notify on Failure
+    runs-on: ${{ inputs.runsOnDefault }}
+    needs: [sanitization, checks, version, docker-build, aggregate-tags, manifest]
+    if: ${{ failure() && !(contains(github.event.head_commit.message, '[skip ci]') || contains(github.event.head_commit.message, '[ci skip]')) }}
+    steps:
+      - name: Send Slack Notification On Failures
+        if: ${{ inputs.slack-send-notification == 'true' }}
+        uses: elioetibr/composite-actions/slack-notification-ci-failure@v0
+        with:
+          channel-id: ${{ inputs.slack-channels }}
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}

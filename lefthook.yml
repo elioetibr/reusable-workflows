@@ -1,0 +1,41 @@
+# lefthook — git hooks manager. Provisioned via mise; install with `mise install`.
+# Docs: https://lefthook.dev
+#
+# Tools are mise-managed, so every command runs through `mise exec --`. This
+# resolves the binaries from mise's environment even in a non-activated shell
+# or a GUI git client (where bare `markdownlint-cli2`/`prettier`/`actionlint`
+# would be "command not found"). Provision once with `mise install`.
+#
+#   pre-commit  fast, staged-file-only checks for instant feedback
+#   pre-push    the full CI-equivalent gate (`mise run ci`)
+
+colors: true
+
+pre-commit:
+  parallel: true
+  commands:
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: mise exec -- actionlint {staged_files}
+
+    yamllint:
+      glob: "*.{yml,yaml}"
+      run: mise exec -- yamllint {staged_files}
+
+    markdownlint:
+      glob: "*.md"
+      exclude:
+        - CHANGELOG.md
+      run: mise exec -- markdownlint-cli2 {staged_files}
+
+    prettier:
+      glob: "*.{json,js,jsx,ts,tsx,css,scss,html}"
+      run: mise exec -- prettier --check {staged_files}
+
+    gitleaks:
+      run: mise exec -- gitleaks protect --staged --no-banner --redact -v
+
+pre-push:
+  commands:
+    check:
+      run: mise run ci

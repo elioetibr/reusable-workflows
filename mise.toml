@@ -1,0 +1,299 @@
+# Dev tooling + tasks for reusable-workflows, managed by mise.
+# https://mise.jdx.dev/tasks/
+#
+#   mise install         # provision the tools below
+#   mise tasks           # list available tasks
+#   mise run lint        # run a task (e.g. lint, fix, ci)
+#   mise run ci          # mirror the CICD workflow lint jobs locally
+
+# Pinned-to-latest dev tools. mise puts these on PATH for `mise run …`, so the
+# tasks below don't need `command -v` guards. `reuse` runs ephemerally via uvx.
+[tools]
+actionlint = "latest"
+gitleaks = "latest"
+jq = "latest"
+sops = "latest"
+yamllint = "latest"
+yq = "latest"
+"npm:markdownlint-cli2" = "latest"
+"npm:prettier" = "latest"
+
+[env]
+# `format`/`format-check` default to markdown only — YAML is governed by
+# yamllint, and prettier can reflow workflow files unexpectedly. Override:
+#   PRETTIER_GLOB='**/*.{md,yml,yaml,json}' mise run format
+PRETTIER_GLOB = "{{ env.PRETTIER_GLOB | default(value='**/*.md') }}"
+MARKDOWN_GLOB = "{{ env.MARKDOWN_GLOB | default(value='**/*.md') }}"
+
+# ── Linting ──────────────────────────────────────────────────────────────────
+
+[tasks.lint-actions]
+description = "Lint workflows/actions with actionlint (.github/actionlint.yaml)"
+run = "actionlint -shellcheck=shellcheck"
+
+[tasks.lint-md]
+description = "Lint markdown with markdownlint-cli2 (.markdownlint.yaml)"
+# `!`-prefixed globs are markdownlint-cli2 exclusions (quote each so the shell
+# doesn't glob-expand them). Mirrors the CICD markdownlint job (CHANGELOG.md,
+# superpowers/ scratch plans) plus local-only untracked dirs CI never sees.
+run = 'markdownlint-cli2 "$MARKDOWN_GLOB" "!node_modules" "!.venv" "!CHANGELOG.md" "!**/superpowers/**" "!.remember" "!secrets"'
+
+[tasks.lint-yaml]
+description = "Lint YAML with yamllint (.yamllint.yml)"
+run = "yamllint ."
+
+[tasks.lint-gitleaks]
+description = "Scan for committed secrets with gitleaks (.gitleaks.toml)"
+run = "gitleaks detect --source . --config .gitleaks.toml --redact"
+
+[tasks.lint]
+description = "Run all linters (actions + YAML + markdown + secrets)"
+depends = ["lint-actions", "lint-yaml", "lint-md", "lint-gitleaks"]
+
+[tasks.security]
+description = "Alias for the secret-scanning lint"
+depends = ["lint-gitleaks"]
+
+[tasks.reuse-lint]
+description = "Check REUSE compliance (SPDX licensing, REUSE.toml)"
+run = "uvx reuse lint"
+
+# ── Formatting / autofix ─────────────────────────────────────────────────────
+
+[tasks.format]
+description = "Auto-format with prettier (writes in place)"
+run = 'prettier --write "$PRETTIER_GLOB"'
+
+[tasks.format-check]
+description = "Verify formatting without writing (CI-friendly)"
+run = 'prettier --check "$PRETTIER_GLOB"'
+
+[tasks.fix-md]
+description = "Auto-fix markdown (markdownlint --fix, then prettier)"
+# prettier last so the tree lands prettier-clean even if markdownlint rewrote
+# lines that prettier would re-wrap.
+run = [
+  'markdownlint-cli2 --fix "$MARKDOWN_GLOB" "!node_modules" "!.venv" "!CHANGELOG.md" "!**/superpowers/**" "!.remember" "!secrets" || true',
+  'prettier --write "$MARKDOWN_GLOB"',
+]
+
+[tasks.fix]
+description = "Run every auto-fixer (fix-md, then prettier format)"
+depends = ["fix-md"]
+run = 'prettier --write "$PRETTIER_GLOB"'
+
+# ── CI / aggregate ───────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "Mirror the CICD workflow lint jobs locally"
+depends = ["lint", "reuse-lint"]
+
+# ── Action docs (README ⇄ action.yml sync) ───────────────────────────────────
+[tasks.docs]
+description = "Regenerate every action's README.md from its action.yml"
+shell = "bash -c"
+run = """
+#!/usr/bin/env bash
+
+set -euo pipefail
+shopt -s nullglob
+
+found=0
+for f in */action.yml */action.yaml; do
+  found=1
+  dir="$(dirname "$f")"
+  base="$(basename "$f")"
+  readme="$dir/README.md"
+  # action-docs --update-readme only rewrites BETWEEN markers in an existing
+  # README; with none it errors (ENOENT). Seed a scaffold so the action is
+  # documented like the rest. Title + description come from action.yml (DRY —
+  # single source of truth); action-docs then fills the inputs/outputs tables.
+  if [ ! -f "$readme" ]; then
+    echo "action-docs: scaffold $readme"
+    title="$(yq -r '.name // ""' "$f")"
+    desc="$(yq -r '.description // ""' "$f")"
+    {
+      printf '# %s\\n\\n' "${title:-$dir}"
+      [ -n "$desc" ] && printf '%s\\n\\n' "$desc"
+      printf '<!-- action-docs-inputs source="%s" -->\\n<!-- action-docs-inputs source="%s" -->\\n\\n' "$base" "$base"
+      printf '<!-- action-docs-outputs source="%s" -->\\n<!-- action-docs-outputs source="%s" -->\\n\\n' "$base" "$base"
+      printf '## Usage\\n\\n```yaml\\n- uses: elioetibr/composite-actions/%s@v0\\n```\\n' "$dir"
+    } > "$readme"
+  fi
+  echo "action-docs: $f"
+  # Run inside the action's directory: the README markers use a relative
+  # `source="action.yml"`, which action-docs resolves against the CWD when
+  # rewriting. Running from the repo root makes it look for a root-level
+  # action.yml that doesn't exist, silently leaving the README stale.
+  ( cd "$dir" && action-docs --no-banner --source "$base" --update-readme )
+done
+[ "$found" -eq 1 ] || echo 'No actions found.'
+"""
+
+[tasks."docs:check"]
+description = "Fail if any README.md is out of sync with its action.yml"
+depends = ["docs"]
+shell = "bash -c"
+run = """
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if ! git diff --quiet -- '*/README.md'; then
+  echo '::error:: README.md out of sync with action.yml — run: mise run docs' >&2
+  git diff --stat -- '*/README.md'
+  exit 1
+fi
+echo 'All action READMEs are in sync.'
+"""
+
+# ── Git submodules ───────────────────────────────────────────────────────────
+
+[tasks.submodules]
+description = "Initialize/reinitialize git submodules (force, recursive)"
+shell = "bash -c"
+run = """
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ ! -f .gitmodules ]; then
+  echo "No .gitmodules found — nothing to initialize."
+  exit 0
+fi
+echo "Syncing submodule URLs from .gitmodules..."
+git submodule sync --recursive
+echo "Force-initializing submodules (recursive)..."
+git submodule update --init --recursive --force
+echo "Submodules initialized."
+"""
+
+# ── SOPS ─────────────────────────────────────────────────────────────────────
+
+[tasks.sops-decrypt]
+description = "Decrypt *.sops.enc.{yaml,yml,json} -> *.sops.dec.* (parallel, max 4)"
+shell = "bash -c"
+run = '''
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SOPS_FILES=$(find . -type f \( -name '*.sops.enc.yaml' -o -name '*.sops.enc.yml' -o -name '*.sops.enc.json' \) | sort -u)
+if [ -z "$SOPS_FILES" ]; then
+  echo "No *.sops.enc.{yaml,yml,json} files found for decryption."
+  exit 0
+fi
+for work_file in $SOPS_FILES; do
+  (
+    current_filename=$(basename "$work_file")
+    secret_dir=$(dirname "$work_file")
+    decrypted_filename=${current_filename/.sops.enc./.sops.dec.}
+    decrypted_file="${secret_dir}/${decrypted_filename}"
+    case "${current_filename##*.}" in
+      yaml|yml) sops_type=yaml ;;
+      json)     sops_type=json ;;
+      *)        echo "Error: unsupported extension on $work_file" >&2; exit 1 ;;
+    esac
+    echo "Decrypting: $work_file -> $decrypted_file"
+    if ! sops --input-type "$sops_type" --output-type "$sops_type" -d "$work_file" > "$decrypted_file"; then
+      echo "Error: Failed to decrypt $work_file" >&2
+      exit 1
+    fi
+  ) &
+  if [ "$(jobs -r -p | wc -l)" -ge 4 ]; then wait -n; fi
+done
+wait
+echo "All decryption jobs completed."
+'''
+
+[tasks.sops-encrypt]
+description = "Encrypt *.sops.dec.{yaml,yml,json} -> *.sops.enc.* (parallel, max 4)"
+shell = "bash -c"
+run = '''
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SOPS_FILES=$(find . -type f \( -name '*.sops.dec.yaml' -o -name '*.sops.dec.yml' -o -name '*.sops.dec.json' \) | sort -u)
+if [ -z "$SOPS_FILES" ]; then
+  echo "No *.sops.dec.{yaml,yml,json} files found for encryption."
+  exit 0
+fi
+for work_file in $SOPS_FILES; do
+  (
+    current_filename=$(basename "$work_file")
+    secret_dir=$(dirname "$work_file")
+    encrypted_filename=${current_filename/.sops.dec./.sops.enc.}
+    encrypted_file="${secret_dir}/${encrypted_filename}"
+    case "${current_filename##*.}" in
+      yaml|yml) sops_type=yaml ;;
+      json)     sops_type=json ;;
+      *)        echo "Error: unsupported extension on $work_file" >&2; exit 1 ;;
+    esac
+    if [ ! -f "$encrypted_file" ] || [ "$work_file" -nt "$encrypted_file" ]; then
+      echo "Encrypting: $work_file -> $encrypted_file"
+      if ! sops --input-type "$sops_type" --output-type "$sops_type" -e "$work_file" > "$encrypted_file"; then
+        echo "Error: Failed to encrypt $work_file" >&2
+        exit 1
+      fi
+    else
+      echo "Skipping: $work_file (no changes detected)"
+    fi
+  ) &
+  if [ "$(jobs -r -p | wc -l)" -ge 4 ]; then wait -n; fi
+done
+wait
+echo "All encryption jobs completed."
+'''
+
+# ── Local `act` testing ──────────────────────────────────────────────────────
+
+[tasks.generate-act-configs]
+description = "Extract GitHub App auth from SOPS into .act/.secrets and .act/.vars"
+shell = "bash -c"
+run = """
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SOPS_FILE="${SOPS_FILE:-secrets/secrets.sops.enc.yml}"
+
+mkdir -p .act
+
+decrypted="$(sops -d "$SOPS_FILE")"
+
+app_id="$(echo "$decrypted" | yq '.github.app_auth.id')"
+installation_id="$(echo "$decrypted" | yq '.github.app_auth.installation_id')"
+client_id="$(echo "$decrypted" | yq '.github.app_auth.client_id')"
+client_secret="$(echo "$decrypted" | yq '.github.app_auth.client_secret')"
+pem="$(echo "$decrypted" | yq '.github.app_auth.pem_file')"
+
+# .act/.secrets — PRIVATE_KEY must be a single line for act
+printf 'PRIVATE_KEY=%s\n' "$(echo "$pem" | awk '{printf "%s\\n", $0}')" > .act/.secrets
+printf 'CLIENT_SECRET=%s\n' "$client_secret" >> .act/.secrets
+
+# .act/.vars
+{
+  printf 'APP_ID=%s\n' "$app_id"
+  printf 'CLIENT_ID=%s\n' "$client_id"
+  printf 'INSTALLATION_ID=%s\n' "$installation_id"
+} > .act/.vars
+
+{
+  echo '{
+    "act": true,
+    "action": "workflow_dispatch",
+    "ref": "refs/main",
+    "ref_name": "main",
+    "inputs": {},
+    "repository": {
+      "default_branch": "main",
+      "name": "reusable-workflows"
+    }
+  }' | jq -r '.'
+} > .act/event.json
+
+chmod 600 .act/.secrets
+
+echo "Wrote .act/.secrets, .act/.vars and .act/event.json"
+"""

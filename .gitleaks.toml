@@ -1,0 +1,156 @@
+# Title for the gitleaks configuration
+title = "Gitleaks Security Configuration"
+
+# Use the most current gitleaks rules
+useDefaultConfig = true
+
+# Define which paths to scan
+[allowlist]
+# Exclude common test/demo files and folders
+paths = [
+  '''node_modules''',
+  '''vendor''',
+  '''dist''',
+  '''(.*?)\.min\.js$''',
+  '''(.*?)\.test\.(.*)$''',
+  '''\.git/''',
+  '''\.yarn/''',
+  '''\.pytest_cache/''',
+  '''\.venv/''',
+  '''__pycache__/''',
+  '''\.idea/''',
+  '''\.vscode/''',
+  '''\.DS_Store$''',
+  '''\.env\.example$''',
+  '''\.env\.sample$''',
+  '''\.env\.template$''',
+]
+
+# Exclude specific files containing test credentials
+regexes = ['''NOCOMMIT''', '''SKIPGITLEAKS''', '''DO-NOT-SUBMIT''']
+
+# Custom rules to supplement the default ruleset
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key"
+regex = '''(?i)aws[_-]?(?:access[_-]?)?key[_-]?id[ =:]\s*['"]*?(?P<secret>[A-Z0-9]{20})['"]?'''
+tags = ["aws", "key", "credentials"]
+secretGroup = 1
+entropy = 3.5
+
+[[rules]]
+id = "aws-secret-access-key"
+description = "AWS Secret Access Key"
+regex = '''(?i)aws[_-]?(?:secret[_-]?)?(?:access[_-]?)?key[ =:]\s*['"]*?(?P<secret>[A-Za-z0-9/+=]{40})['"]?'''
+tags = ["aws", "secret", "credentials"]
+secretGroup = 1
+entropy = 4.5
+
+[[rules]]
+id = "google-api-key"
+description = "Google API Key"
+regex = '''(?i)(?:google|gcp)[_-]?(?:api)?[_-]?key[ =:]\s*['"]*?(?P<secret>AIza[0-9A-Za-z-_]{35})['"]?'''
+tags = ["google", "api", "key"]
+secretGroup = 1
+
+[[rules]]
+id = "github-token"
+description = "GitHub Token"
+regex = '''(?i)(?:github|gh)[_-]?(?:personal[_-]?access)?[_-]?token[ =:]\s*['"]*?(?P<secret>gh[pousr]_[A-Za-z0-9_]{36,255})['"]?'''
+tags = ["github", "token"]
+secretGroup = 1
+entropy = 4.0
+
+[[rules]]
+id = "slack-token"
+description = "Slack Token"
+regex = '''(?i)slack[_-]?(?:api|webhook|token|secret)?[ =:]\s*['"]*?(?P<secret>xox[baprs]-[0-9A-Za-z-]{10,48})['"]?'''
+tags = ["slack", "token"]
+secretGroup = 1
+
+[[rules]]
+id = "private-key"
+description = "Private Key"
+regex = '''(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-----[\s\S]*?(?P<secret>-----)'''
+tags = ["private-key", "pem", "ssh"]
+secretGroup = 1
+
+[[rules]]
+id = "stripe-api-key"
+description = "Stripe API Key"
+regex = '''(?i)stripe[_-]?(?:api)?[_-]?key[ =:]\s*['"]*?(?P<secret>sk_live_[0-9a-zA-Z]{24,34})['"]?'''
+tags = ["stripe", "api", "key"]
+secretGroup = 1
+
+[[rules]]
+id = "password-in-url"
+description = "Password in URL"
+regex = '''(?i)(?P<secret>[a-zA-Z]{3,10})://[^/\s:@]*?:[^/\s:@]*?@[^/\s:@]*'''
+tags = ["password", "url", "credentials"]
+secretGroup = 1
+
+[[rules]]
+id = "generic-secret"
+description = "Generic Secret"
+regex = '''(?i)secret[ =:]\s*['"]*?(?P<secret>[A-Za-z0-9/+]{16,})['"]?'''
+tags = ["secret", "generic"]
+secretGroup = 1
+entropy = 4.0
+
+[[rules]]
+id = "mongodb-connection-string"
+description = "MongoDB Connection String"
+regex = '''(?i)mongodb(?:\+srv)?://(?:(?P<secret>[^:@\s]+):)?(?:(?P<secret>[^:@\s]+))@[^@\s]+'''
+tags = ["mongodb", "database", "connection"]
+secretGroup = 1
+
+[[rules]]
+id = "jwt-token"
+description = "JWT Token"
+regex = '''(?i)(?:jwt|json[ -]?web[ -]?token)[ =:]\s*['"]*?(?P<secret>ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})['"]?'''
+tags = ["jwt", "token"]
+secretGroup = 1
+
+[[rules]]
+id = "firebase-database-url"
+description = "Firebase Database URL"
+regex = '''(?i)firebase[ =:]\s*['"]*?(?P<secret>https://[a-z0-9-]+\.firebaseio\.com)['"]?'''
+tags = ["firebase", "database"]
+secretGroup = 1
+
+[[rules]]
+id = "env-file"
+description = "Environment File"
+# Scope to real dotenv files only (gitleaks v8 uses `path`, not the
+# deprecated v7 `fileNameRegex`). Without this, the content regex below
+# matches `key:`/`token:` keys in every YAML/Actions file and captures
+# the following key name as a bogus "secret".
+path = '''(?i)(^|/)\.env(\.[^/]+)?$'''
+regex = '''(?i)(api_key|apikey|auth|credentials|database|db_password|key|pass|password|secret|token)[ =:]\s*['"]*?([A-Za-z0-9_\-\.]{8,})['"]?'''
+secretGroup = 2
+
+[[rules]]
+id = "docker-registry-auth"
+description = "Docker Registry Authentication"
+regex = '''(?i)docker[ \-_]?registry[ \-_]?(?:auth|token|key)[ =:]\s*['"]*?(?P<secret>[A-Za-z0-9/+=]{8,})['"]?'''
+tags = ["docker", "registry", "authentication"]
+secretGroup = 1
+
+[[rules]]
+id = "env-file-contents"
+description = ".env File Contents"
+# Scope to real dotenv files only — see the env-file rule above. The
+# unscoped content regex otherwise flags ordinary YAML keys as secrets.
+path = '''(?i)(^|/)\.env(\.[^/]+)?$'''
+regex = '''(?i)(api_key|apikey|auth|credentials|database|db_password|key|pass|password|secret|token)[ =:]\s*['"]*?([A-Za-z0-9_\-\.]{8,})['"]?'''
+secretGroup = 2
+tags = ["environment", "credentials"]
+
+# Additional post commit scanning options
+[extend]
+# Check previous commits more extensively
+depth = 50
+# Scan all branches
+all_branches = true
+# Include detailed reporting
+verbose = true

@@ -1,0 +1,67 @@
+# Configuration for actions/labeler@v5
+# https://github.com/actions/labeler
+#
+# This repo is a monorepo of GitHub composite actions. Path globs label PRs
+# by what they touch so that release notes (via .github/release.yml) and
+# triage filters work consistently.
+
+composite-action:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'bot-setup/**/*'
+          - 'checkout-as-bot/**/*'
+          - 'setup-cargo-tools/**/*'
+          - 'setup-rust-cache/**/*'
+
+bot-setup:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'bot-setup/**/*'
+
+checkout-as-bot:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'checkout-as-bot/**/*'
+
+setup-cargo-tools:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'setup-cargo-tools/**/*'
+
+setup-rust-cache:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'setup-rust-cache/**/*'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**/*'
+          - 'README*'
+          - 'CONTRIBUTING*'
+          - 'SECURITY*'
+          - 'LICENSE*'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/**/*'
+          - '.github/labeler.yml'
+          - '.github/release.yml'
+          - '.github/actionlint.yaml'
+          - 'GitVersion.yml'
+          - 'cliff.toml'
+          - '.markdownlint.yaml'
+          - '.yamllint.yaml'
+          - '.editorconfig'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/dependabot.yml'
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/tests/**/*'

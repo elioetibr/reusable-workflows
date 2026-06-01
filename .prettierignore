@@ -1,0 +1,34 @@
+# VCS and worktrees
+.git/
+.worktrees/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node (in case anything ever pulls it in)
+node_modules/
+
+# Secrets — never touch encrypted or decrypted SOPS files
+**/*.sops.enc.*
+**/*.sops.dec.*
+**/*.dec.yml
+**/*.dec.yaml
+.vault_pass
+
+# Ansible runtime artifacts
+*.retry
+
+# Session memory — auto-generated, not human-edited
+.remember/
+
+# Jinja2 templates — prettier doesn't understand the {{ … }} syntax
+**/*.j2
+
+# Ansible vars artifacts intentionally kept verbatim
+vars/secrets.yml
+vars/secrets.yml.dec
+
+# macOS noise
+.DS_Store
