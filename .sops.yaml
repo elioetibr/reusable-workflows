@@ -1,0 +1,11 @@
+---
+# creation rules are evaluated sequentially, the first match wins
+creation_rules:
+  - path_regex: '(.*)/(.*).(json|yml|yaml)'
+    pgp: >-
+      A864CF59AD893C5E4922269DD0BD6E03F0E1F39C,
+      A0D4D31F1F5D9BA088888DAB0C4F84209BD5BBDF,
+      A2D6FB59B620A82A62D6E4F20C235D9552CE092B,
+    age: >-
+      age1gj2mjwlgz3err3u0kyeyq38trc2lj8t7n403eaat4adrpcuncupqy33v6p,
+      age18q36v3x4alvk5p9fm9048knehltpfkxxehdkas00knrewhuzr5kqurr8j4

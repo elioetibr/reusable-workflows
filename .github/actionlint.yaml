@@ -1,0 +1,55 @@
+---
+# actionlint configuration
+# https://github.com/rhysd/actionlint/blob/main/docs/config.md
+
+self-hosted-runner:
+  labels: []
+
+# Org-level Actions variables are not visible to actionlint via API; declare
+# the ones we reference here so the strict-vars check stays clean.
+config-variables:
+  - ACR_NAME
+  - APP_ID
+  - AWS_ACCOUNT_ID
+  - AWS_ADDITIONAL_ECR_REGISTRIES
+  - AWS_CICD_ACCOUNT_ID
+  - AWS_CICD_CROSS_ACCOUNT_ROLE
+  - AWS_DEV_ACCOUNT_ID
+  - AWS_REGION
+  - AZURE_CLIENT_ID
+  - AZURE_SUBSCRIPTION_ID
+  - AZURE_TENANT_ID
+  - CLIENT_ID
+  - DOCKER_BUILD_PLATFORM
+  - DOCKER_BUILD_PROVENANCE
+  - DOCKER_BUILD_PUSH
+  - DOCKER_BUILD_USE_QEMU
+  - DOCKER_TAG_LATEST
+  - DOCKERHUB_NAMESPACE
+  - GCP_LOCATION
+  - GCP_PROJECT_ID
+  - GCP_SERVICE_ACCOUNT
+  - GCP_WORKLOAD_IDENTITY_PROVIDER
+  - GITVERSION_SPEC
+  - IMAGE_REPOSITORY
+  - REGISTRY
+  - REGISTRY_PROVIDER
+  - RUNS_ON
+  - RUNS_ON_ARM64
+  - RUNS_ON_GHA_AMD64
+  - RUNS_ON_GHA_ARM64
+  - SLACK_BOT_CI_CHANNELS
+  - SLACK_SEND_NOTIFICATIONS
+  - SLACK_VIAFOURA_CHANNELS
+  - SONAR_SCAN
+
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # actionlint's pinned action metadata for actions/create-github-app-token
+      # still treats `app-id` as required and does not recognize the documented
+      # `client-id` input. Both inputs exist upstream (app-id is deprecated in
+      # favor of client-id), so suppress these two stale-metadata errors only.
+      # See: https://github.com/actions/create-github-app-token/blob/main/action.yml
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v\d+'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v\d+'

@@ -1,0 +1,302 @@
+name: Multi-Arch Docker Pipeline
+
+# Wrapper workflow for Docker-only multi-architecture builds
+# Calls the unified build-multi-arch.yml workflow with build-type: docker
+#
+# Cloud-agnostic: select the registry backend via `registry-provider`
+# (aws | gcp | azure | ghcr | dockerhub | generic). AWS remains the default for
+# backward compatibility; provider-specific inputs are forwarded as-is.
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+  checks: write
+  packages: write
+
+on:
+  workflow_call:
+    inputs:
+      # =======================================================================
+      # Registry Provider Selection
+      # =======================================================================
+      registry-provider:
+        description: 'Registry provider: aws | gcp | azure | ghcr | dockerhub | generic'
+        required: false
+        type: string
+        default: ${{ vars.REGISTRY_PROVIDER || 'ghcr' }}
+
+      registry:
+        description: 'Explicit registry host/prefix override (required for generic)'
+        required: false
+        type: string
+        default: ''
+
+      image-repository:
+        required: false
+        type: string
+        default: ${{ vars.IMAGE_REPOSITORY || github.event.repository.name }}
+        description: 'Repository/image name (registry-agnostic)'
+
+      registry-username:
+        description: 'Registry username (ghcr/dockerhub/generic)'
+        required: false
+        type: string
+        default: ''
+
+      # AWS Configuration (registry-provider: aws)
+      aws-account-id:
+        default: ${{ vars.AWS_CICD_ACCOUNT_ID }}
+        description: AWS Account ID
+        required: false
+        type: string
+
+      aws-region:
+        default: ${{ vars.AWS_REGION }}
+        description: AWS Region
+        required: false
+        type: string
+
+      aws-role-name:
+        default: ${{ vars.AWS_CICD_CROSS_ACCOUNT_ROLE }}
+        description: AWS GitHub OIDC Role Name
+        required: false
+        type: string
+
+      # GCP Configuration (registry-provider: gcp)
+      gcp-location:
+        description: 'Artifact Registry location, e.g. "us" or "us-central1"'
+        required: false
+        type: string
+        default: ${{ vars.GCP_LOCATION || '' }}
+
+      gcp-project-id:
+        description: 'GCP project ID'
+        required: false
+        type: string
+        default: ${{ vars.GCP_PROJECT_ID || '' }}
+
+      gcp-workload-identity-provider:
+        description: 'Full Workload Identity Federation provider resource name'
+        required: false
+        type: string
+        default: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || '' }}
+
+      gcp-service-account:
+        description: 'GCP service account email to impersonate'
+        required: false
+        type: string
+        default: ${{ vars.GCP_SERVICE_ACCOUNT || '' }}
+
+      # Azure Configuration (registry-provider: azure)
+      azure-client-id:
+        description: 'Azure AD application (client) ID for OIDC'
+        required: false
+        type: string
+        default: ${{ vars.AZURE_CLIENT_ID || '' }}
+
+      azure-tenant-id:
+        description: 'Azure AD tenant ID'
+        required: false
+        type: string
+        default: ${{ vars.AZURE_TENANT_ID || '' }}
+
+      azure-subscription-id:
+        description: 'Azure subscription ID'
+        required: false
+        type: string
+        default: ${{ vars.AZURE_SUBSCRIPTION_ID || '' }}
+
+      acr-name:
+        description: 'Azure Container Registry name (without .azurecr.io)'
+        required: false
+        type: string
+        default: ${{ vars.ACR_NAME || '' }}
+
+      # Docker Hub Configuration (registry-provider: dockerhub)
+      dockerhub-namespace:
+        description: 'Docker Hub user/org namespace used as the registry prefix'
+        required: false
+        type: string
+        default: ${{ vars.DOCKERHUB_NAMESPACE || '' }}
+
+      # GitHub Configuration
+      client-id:
+        default: ${{ vars.CLIENT_ID }}
+        description: GitHub App Client ID
+        required: false
+        type: string
+
+      build-date-time:
+        default: ${{ github.event.created_at }}
+        description: Build Date Time
+        required: false
+        type: string
+
+      owner:
+        default: ${{ github.repository_owner }}
+        description: GitHub Organization Owner / GitHub Personal Account
+        required: false
+        type: string
+
+      repository:
+        default: ${{ github.event.repository.name }}
+        description: GitHub Repository Name
+        required: false
+        type: string
+
+      runsOnDefault:
+        required: false
+        type: string
+        default: "ubuntu-latest"
+        description: "Default runner for non-arch-specific jobs"
+
+      runsOnAmd64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_AMD64 }}
+        description: "Runner for AMD64 architecture builds"
+
+      runsOnArm64:
+        required: false
+        type: string
+        default: ${{ vars.RUNS_ON_GHA_ARM64 }}
+        description: "Runner for ARM64 architecture builds"
+
+      # Docker Configuration
+      dockerfile-path:
+        default: "./Dockerfile"
+        description: Docker Path
+        required: false
+        type: string
+
+      context:
+        default: .
+        description: Dockerfile Directory
+        required: false
+        type: string
+
+      fail-fast:
+        default: true
+        description: Fail workflow fast if a job fails
+        required: false
+        type: boolean
+
+      image:
+        description: Image Name
+        required: false
+        type: string
+
+      platform:
+        default: ""
+        description: Platform architecture
+        required: false
+        type: string
+
+      provenance:
+        default: ${{ vars.DOCKER_BUILD_PROVENANCE }}
+        description: Enable SLSA provenance
+        required: false
+        type: string
+
+      push:
+        default: ${{ vars.DOCKER_BUILD_PUSH }}
+        description: Push Image after Build
+        required: false
+        type: string
+
+      sendSlackNotification:
+        default: ${{ vars.SLACK_SEND_NOTIFICATIONS }}
+        description: Send Slack Notification
+        required: false
+        type: string
+
+      slackChannels:
+        default: ${{ vars.SLACK_VIAFOURA_CHANNELS }}
+        description: Slack channels for notifications
+        required: false
+        type: string
+
+      sonarCloudScan:
+        default: ${{ vars.SONAR_SCAN }}
+        description: To Execute SonarCloud Scan
+        required: false
+        type: string
+
+      tag:
+        description: Image Tag Version
+        required: false
+        type: string
+
+      versionSpec:
+        default: ${{ vars.GITVERSION_SPEC || '6.x'}}
+        description: GitVersion Version Specification
+        required: false
+        type: string
+
+      create-latest-tag:
+        default: ${{ vars.DOCKER_TAG_LATEST || 'false' }}
+        description: Create and push the latest tag alongside the version tag
+        required: false
+        type: string
+
+    secrets:
+      PRIVATE_KEY:
+        required: true
+      SLACK_BOT_TOKEN:
+        required: true
+      SONAR_TOKEN:
+        required: true
+      REGISTRY_PASSWORD:
+        description: 'Registry password/token for ghcr/dockerhub/generic providers (unused for OIDC backends)'
+        required: false
+
+    outputs:
+      version:
+        description: "The version calculated by GitVersion"
+        value: ${{ jobs.build.outputs.version }}
+      semVer:
+        description: "The semantic version"
+        value: ${{ jobs.build.outputs.semVer }}
+      shortSha:
+        description: "Short SHA of the commit"
+        value: ${{ jobs.build.outputs.shortSha }}
+
+jobs:
+  build:
+    uses: elioetibr/reusable-workflows/.github/workflows/build-multi-arch.yml@main
+    with:
+      build-type: docker
+      registry-provider: ${{ inputs.registry-provider }}
+      registry: ${{ inputs.registry }}
+      image-repository: ${{ inputs.image-repository }}
+      registry-username: ${{ inputs.registry-username }}
+      aws-account-id: ${{ inputs.aws-account-id }}
+      aws-region: ${{ inputs.aws-region }}
+      aws-role-name: ${{ inputs.aws-role-name }}
+      gcp-location: ${{ inputs.gcp-location }}
+      gcp-project-id: ${{ inputs.gcp-project-id }}
+      gcp-workload-identity-provider: ${{ inputs.gcp-workload-identity-provider }}
+      gcp-service-account: ${{ inputs.gcp-service-account }}
+      azure-client-id: ${{ inputs.azure-client-id }}
+      azure-tenant-id: ${{ inputs.azure-tenant-id }}
+      azure-subscription-id: ${{ inputs.azure-subscription-id }}
+      acr-name: ${{ inputs.acr-name }}
+      dockerhub-namespace: ${{ inputs.dockerhub-namespace }}
+      client-id: ${{ inputs.client-id }}
+      owner: ${{ inputs.owner }}
+      repository: ${{ inputs.repository }}
+      runsOnDefault: ${{ inputs.runsOnDefault }}
+      runsOnAmd64: ${{ inputs.runsOnAmd64 }}
+      runsOnArm64: ${{ inputs.runsOnArm64 }}
+      dockerfile-path: ${{ inputs.dockerfile-path }}
+      context: ${{ inputs.context }}
+      fail-fast: ${{ inputs.fail-fast }}
+      provenance: ${{ inputs.provenance }}
+      push: ${{ inputs.push }}
+      slack-send-notification: ${{ inputs.sendSlackNotification }}
+      slack-channels: ${{ inputs.slackChannels }}
+      versionSpec: ${{ inputs.versionSpec }}
+      create-latest-tag: ${{ inputs.create-latest-tag }}
+    secrets:
+      inherit

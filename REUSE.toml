@@ -1,0 +1,21 @@
+version = 1
+SPDX-PackageName = "reusable-workflows"
+SPDX-PackageSupplier = "Elio <elio@elio.eti.br>"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Elio Eti Br"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = ["sops/**.enc.yaml", "sops/**.enc.yml"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Elio Eti Br"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = "**.tfstate"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Elio Eti Br"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
